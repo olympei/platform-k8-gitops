@@ -229,6 +229,9 @@ plan:
         if [ -f "$CHART_DIR/Chart.yaml" ] && grep -q "dependencies:" "$CHART_DIR/Chart.yaml"; then
           echo "📦 Chart has dependencies, extracting repositories..."
           
+          # Set environment variable to skip TLS verification for Helm
+          export HELM_REPO_SKIP_TLS_VERIFY=true
+          
           # Extract unique repository URLs from Chart.yaml
           REPOS=$(grep -A 10 "dependencies:" "$CHART_DIR/Chart.yaml" | grep "repository:" | awk '{print $2}' | tr -d '"' | sort -u)
           
@@ -244,7 +247,7 @@ plan:
           # Only update and build if repositories were added
           if [ $REPOS_ADDED -gt 0 ]; then
             echo "Updating $REPOS_ADDED repository/repositories..."
-            helm repo update --insecure-skip-tls-verify || true
+            helm repo update || true
             
             echo "Building chart dependencies..."
             helm dependency build "$CHART_DIR" --skip-refresh || {
@@ -308,6 +311,9 @@ plan:
       if [ -f "$CHART_DIR/Chart.yaml" ] && grep -q "dependencies:" "$CHART_DIR/Chart.yaml"; then
         echo "📦 Chart has dependencies, extracting repositories..."
         
+        # Set environment variable to skip TLS verification for Helm
+        export HELM_REPO_SKIP_TLS_VERIFY=true
+        
         # Extract unique repository URLs from Chart.yaml
         REPOS=$(grep -A 10 "dependencies:" "$CHART_DIR/Chart.yaml" | grep "repository:" | awk '{print $2}' | tr -d '"' | sort -u)
         
@@ -323,7 +329,7 @@ plan:
         # Only update and build if repositories were added
         if [ $REPOS_ADDED -gt 0 ]; then
           echo "Updating $REPOS_ADDED repository/repositories..."
-          helm repo update --insecure-skip-tls-verify || true
+          helm repo update || true
           
           echo "Building chart dependencies..."
           helm dependency build "$CHART_DIR" --skip-refresh || {

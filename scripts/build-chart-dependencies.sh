@@ -40,6 +40,7 @@ echo "Extracting repositories from Chart.yaml..."
 
 if [ "$SKIP_TLS" = "true" ]; then
   echo "⚠️  Skipping TLS verification"
+  export HELM_REPO_SKIP_TLS_VERIFY=true
   TLS_FLAG="--insecure-skip-tls-verify"
 else
   TLS_FLAG=""
@@ -63,11 +64,7 @@ if [ $REPOS_ADDED -eq 0 ]; then
 else
   echo ""
   echo "Updating $REPOS_ADDED repository/repositories..."
-  if [ "$SKIP_TLS" = "true" ]; then
-    helm repo update --insecure-skip-tls-verify
-  else
-    helm repo update
-  fi
+  helm repo update || true
 fi
 
 echo ""
