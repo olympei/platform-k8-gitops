@@ -348,7 +348,7 @@ resource "aws_iam_policy" "external_dns" {
           "route53:ChangeResourceRecordSets"
         ]
         Resource = [
-          "arn:aws:route53:::hostedzone/*"
+          "arn:aws:route53::*:hostedzone/*"
         ]
       },
       {
@@ -368,7 +368,7 @@ resource "aws_iam_policy" "external_dns" {
           "route53:GetChange"
         ]
         Resource = [
-          "arn:aws:route53:::change/*"
+          "arn:aws:route53::*:change/*"
         ]
       }
     ]

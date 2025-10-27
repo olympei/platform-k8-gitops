@@ -217,7 +217,37 @@ plan:
           continue
         fi
 
-        helm dependency update "$CHART_DIR" || true
+        # Build chart dependencies if Chart.yaml has dependencies
+        if [ -f "$CHART_DIR/Chart.yaml" ] && grep -q "dependencies:" "$CHART_DIR/Chart.yaml"; then
+          echo "📦 Building chart dependencies..."
+          
+          # Add repositories based on what's needed
+          if grep -q "charts.external-secrets.io" "$CHART_DIR/Chart.yaml"; then
+            helm repo add external-secrets https://charts.external-secrets.io --insecure-skip-tls-verify || true
+          fi
+          if grep -q "aws.github.io/eks-charts" "$CHART_DIR/Chart.yaml"; then
+            helm repo add eks https://aws.github.io/eks-charts --insecure-skip-tls-verify || true
+          fi
+          if grep -q "kubernetes.github.io/autoscaler" "$CHART_DIR/Chart.yaml"; then
+            helm repo add autoscaler https://kubernetes.github.io/autoscaler --insecure-skip-tls-verify || true
+          fi
+          if grep -q "kubernetes.github.io/ingress-nginx" "$CHART_DIR/Chart.yaml"; then
+            helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --insecure-skip-tls-verify || true
+          fi
+          if grep -q "kubernetes-sigs.github.io/metrics-server" "$CHART_DIR/Chart.yaml"; then
+            helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server --insecure-skip-tls-verify || true
+          fi
+          if grep -q "kubernetes-sigs.github.io/secrets-store-csi-driver" "$CHART_DIR/Chart.yaml"; then
+            helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts --insecure-skip-tls-verify || true
+          fi
+          
+          helm repo update --insecure-skip-tls-verify || true
+          helm dependency build "$CHART_DIR" --skip-refresh || {
+            echo "⚠️  Dependency build failed, trying with update..."
+            helm dependency update "$CHART_DIR" || true
+          }
+        fi
+
         helm upgrade --install "$RELEASE_NAME" "$CHART_DIR" \
           -n "$NAMESPACE" --create-namespace \
           -f "$VALUES_FILE" \
@@ -259,7 +289,37 @@ plan:
       echo "Using values: $VALUES_FILE"
       echo "-------------------------------------------------"
       
-      helm dependency update "$CHART_DIR" || true
+      # Build chart dependencies if Chart.yaml has dependencies
+      if [ -f "$CHART_DIR/Chart.yaml" ] && grep -q "dependencies:" "$CHART_DIR/Chart.yaml"; then
+        echo "📦 Building chart dependencies..."
+        
+        # Add repositories based on what's needed
+        if grep -q "charts.external-secrets.io" "$CHART_DIR/Chart.yaml"; then
+          helm repo add external-secrets https://charts.external-secrets.io --insecure-skip-tls-verify || true
+        fi
+        if grep -q "aws.github.io/eks-charts" "$CHART_DIR/Chart.yaml"; then
+          helm repo add eks https://aws.github.io/eks-charts --insecure-skip-tls-verify || true
+        fi
+        if grep -q "kubernetes.github.io/autoscaler" "$CHART_DIR/Chart.yaml"; then
+          helm repo add autoscaler https://kubernetes.github.io/autoscaler --insecure-skip-tls-verify || true
+        fi
+        if grep -q "kubernetes.github.io/ingress-nginx" "$CHART_DIR/Chart.yaml"; then
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --insecure-skip-tls-verify || true
+        fi
+        if grep -q "kubernetes-sigs.github.io/metrics-server" "$CHART_DIR/Chart.yaml"; then
+          helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server --insecure-skip-tls-verify || true
+        fi
+        if grep -q "kubernetes-sigs.github.io/secrets-store-csi-driver" "$CHART_DIR/Chart.yaml"; then
+          helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts --insecure-skip-tls-verify || true
+        fi
+        
+        helm repo update --insecure-skip-tls-verify || true
+        helm dependency build "$CHART_DIR" --skip-refresh || {
+          echo "⚠️  Dependency build failed, trying with update..."
+          helm dependency update "$CHART_DIR" || true
+        }
+      fi
+
       helm upgrade --install "$RELEASE_NAME" "$CHART_DIR" \
         -n "$NAMESPACE" --create-namespace \
         -f "$VALUES_FILE" \
