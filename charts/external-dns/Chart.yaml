@@ -1,0 +1,8 @@
+apiVersion: v2
+name: external-dns
+version: 1.0.0
+description: External DNS for automatic DNS management in AWS Route 53
+dependencies:
+  - name: external-dns
+    version: "1.14.5"
+    repository: "https://kubernetes-sigs.github.io/external-dns/"

@@ -1,0 +1,10 @@
+resources:
+  - ../../base/storage.yaml
+patches:
+  - target:
+      kind: PersistentVolume
+      name: efs-pv
+    patch: |
+      - op: replace
+        path: /spec/csi/volumeHandle
+        value: fs-dev1234

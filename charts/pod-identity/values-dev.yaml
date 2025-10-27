@@ -1,0 +1,50 @@
+# AWS Pod Identity Agent configuration for dev environment
+
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+# Pod Identity Agent settings
+agent:
+  additionalArgs: []
+  env: []
+  image:
+    repository: public.ecr.aws/eks/eks-pod-identity-agent
+    tag: v1.3.2
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# Node selector for agent pods
+nodeSelector: {}
+
+# Tolerations for agent pods
+tolerations:
+  - operator: Exists
+
+# Service account configuration
+serviceAccount:
+  create: true
+  name: eks-pod-identity-agent
+  annotations:
+    # IRSA annotation (used when authMethod is "irsa")
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-PodIdentity-Role-dev"
+    # Pod Identity annotations (used when authMethod is "pod-identity")
+    eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-PodIdentity-Role-dev"
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 65534
+
+# Pod Identity specific configuration
+podIdentity:
+  enabled: true
+  roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-PodIdentity-Role-dev"

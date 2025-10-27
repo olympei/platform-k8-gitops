@@ -1,0 +1,170 @@
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+# Load balancer configuration
+loadBalancer:
+  # Set to "internal" for internal load balancer, "internet-facing" for public
+  scheme: "internal"
+  # Specify VPC subnets for load balancer placement
+  subnets:
+    # Private subnets for internal load balancer
+    - "subnet-12345678"  # Replace with your private subnet ID
+    - "subnet-87654321"  # Replace with your private subnet ID
+  # Optional: Specify VPC for additional security
+  vpc: "vpc-abcdef123"   # Replace with your VPC ID
+
+# SSL/TLS Certificate configuration
+ssl:
+  # Enable SSL termination at the load balancer level
+  enabled: true
+  # ACM certificate ARN for SSL termination (use dev certificate)
+  certificateArn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/dev-12345678-1234-1234-1234-123456789012"
+  # SSL policy for the load balancer
+  sslPolicy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+  # Additional certificate ARNs for multi-domain support
+  additionalCertificates: []
+
+controller:
+  replicaCount: 1
+  
+  # Ingress class configuration
+  ingressClassResource:
+    name: nginx
+    enabled: true
+    default: false
+  
+  # Service configuration for internal load balancer with SSL
+  service:
+    type: LoadBalancer
+    annotations:
+      # Use Network Load Balancer
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      # Internal load balancer
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+      # Specify subnets for load balancer
+      service.beta.kubernetes.io/aws-load-balancer-subnets: "subnet-12345678,subnet-87654321"
+      # Cross-zone load balancing
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+      # SSL Certificate configuration
+      service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/dev-12345678-1234-1234-1234-123456789012"
+      service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+      service.beta.kubernetes.io/aws-load-balancer-ssl-negotiation-policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+      # Backend protocol for SSL termination
+      service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+      # Health check configuration
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "http"
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/healthz"
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "10254"
+      # Connection draining
+      service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+      service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "60"
+      # Additional tags
+      service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Environment=dev,Project=eks-addons"
+    
+    # Configure both HTTP and HTTPS ports
+    ports:
+      http:
+        port: 80
+        protocol: TCP
+        targetPort: http
+      https:
+        port: 443
+        protocol: TCP
+        targetPort: http  # SSL terminated at LB, backend uses HTTP
+    
+    # External traffic policy for preserving source IP
+    externalTrafficPolicy: Local
+    
+    # Load balancer source ranges (restrict access)
+    loadBalancerSourceRanges:
+      - "10.0.0.0/8"     # Private networks
+      - "172.16.0.0/12"  # Private networks
+      - "192.168.0.0/16" # Private networks
+  
+  # Metrics configuration
+  metrics:
+    enabled: true
+    service:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "10254"
+  
+  # Service account configuration
+  serviceAccount:
+    create: true
+    name: ingress-nginx
+    annotations:
+      # IRSA annotation (used when authMethod is "irsa")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-IngressNginx-Role-dev"
+      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-IngressNginx-Role-dev"
+  
+  # Resource configuration
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Node placement
+  nodeSelector:
+    kubernetes.io/os: linux
+  
+  # Tolerations for system nodes
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+  
+  # Affinity for better distribution
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: eks.amazonaws.com/nodegroup
+                operator: In
+                values: ["system"]
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: ingress-nginx
+            topologyKey: kubernetes.io/hostname
+  
+  # Configuration for internal access with SSL
+  config:
+    # Enable real IP forwarding
+    use-forwarded-headers: "true"
+    compute-full-forwarded-for: "true"
+    use-proxy-protocol: "false"
+    # SSL configuration - SSL terminated at LB
+    ssl-redirect: "false"
+    force-ssl-redirect: "false"
+    # Trust X-Forwarded-Proto header from load balancer
+    use-forwarded-headers: "true"
+    # Logging
+    log-format-upstream: '$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" $request_length $request_time [$proxy_upstream_name] [$proxy_alternative_upstream_name] $upstream_addr $upstream_response_length $upstream_response_time $upstream_status $req_id'
+
+# Pod Identity specific configuration
+podIdentity:
+  enabled: true
+  roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-IngressNginx-Role-dev"
+
+# Default backend configuration
+defaultBackend:
+  enabled: true
+  image:
+    repository: registry.k8s.io/defaultbackend-amd64
+    tag: "1.5"
+  resources:
+    limits:
+      cpu: 10m
+      memory: 20Mi
+    requests:
+      cpu: 10m
+      memory: 20Mi

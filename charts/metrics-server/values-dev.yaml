@@ -1,0 +1,122 @@
+# Kubernetes Metrics Server configuration for dev environment
+
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+# Metrics Server configuration
+metrics-server:
+  # Image configuration
+  image:
+    repository: registry.k8s.io/metrics-server/metrics-server
+    tag: v0.7.1
+    pullPolicy: IfNotPresent
+
+  # Service account configuration
+  serviceAccount:
+    create: true
+    name: metrics-server
+    annotations:
+      # IRSA annotation (used when authMethod is "irsa")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-MetricsServer-Role-dev"
+      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-MetricsServer-Role-dev"
+
+  # Pod Identity specific configuration
+  podIdentity:
+    enabled: true
+    roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-MetricsServer-Role-dev"
+
+  # Metrics server arguments
+  args:
+    - --cert-dir=/tmp
+    - --secure-port=10250
+    - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+    - --kubelet-use-node-status-port
+    - --metric-resolution=15s
+    - --kubelet-insecure-tls  # For dev environment
+
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 200Mi
+    limits:
+      cpu: 100m
+      memory: 200Mi
+
+  # Security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Container security context
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+
+  # Node selector
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # Tolerations
+  tolerations:
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+  # Affinity - prefer system nodes
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: eks.amazonaws.com/nodegroup
+                operator: In
+                values: ["system"]
+
+  # Priority class
+  priorityClassName: system-cluster-critical
+
+  # API service configuration
+  apiService:
+    create: true
+    insecureSkipTLSVerify: true  # For dev environment
+
+  # Deployment strategy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false  # Single replica in dev
+
+  # Monitoring
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+  # Replica count
+  replicas: 1
+
+  # Host network (recommended for metrics server)
+  hostNetwork:
+    enabled: false  # Disabled for dev to avoid conflicts

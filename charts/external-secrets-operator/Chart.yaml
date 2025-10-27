@@ -1,0 +1,8 @@
+apiVersion: v2
+name: external-secrets-operator
+version: 1.0.0
+description: External Secrets Operator
+dependencies:
+  - name: external-secrets
+    version: "0.9.11"
+    repository: "https://charts.external-secrets.io"

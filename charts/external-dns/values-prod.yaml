@@ -1,0 +1,190 @@
+# External DNS configuration for prod environment
+
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+# External DNS configuration
+external-dns:
+  # Image configuration
+  image:
+    repository: registry.k8s.io/external-dns/external-dns
+    tag: v0.14.2
+    pullPolicy: IfNotPresent
+
+  # Service account configuration
+  serviceAccount:
+    create: true
+    name: external-dns
+    annotations:
+      # IRSA annotation (used when authMethod is "irsa")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-prod"
+      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-prod"
+
+  # Pod Identity specific configuration
+  podIdentity:
+    enabled: true
+    roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-prod"
+
+  # Provider configuration
+  provider: aws
+
+  # AWS specific configuration
+  aws:
+    region: us-east-1
+    zoneType: public  # public, private, or both
+    assumeRoleArn: ""  # Optional: assume role for cross-account access
+    batchChangeSize: 1000
+    batchChangeInterval: 1s
+    evaluateTargetHealth: true
+    preferCNAME: false
+
+  # Domain filters - restrict to specific domains
+  domainFilters:
+    - "example.com"      # Replace with your production domain
+    - "api.example.com"  # Additional subdomains
+
+  # Zone ID filters - restrict to specific hosted zones (recommended for prod)
+  zoneIdFilters:
+    - "Z1234567890ABC"  # Replace with your Route 53 hosted zone ID
+
+  # Annotation filters - only process resources with specific annotations
+  annotationFilter: "external-dns.alpha.kubernetes.io/hostname"
+
+  # Sources to watch for DNS records
+  sources:
+    - service
+    - ingress
+    - istio-gateway
+    - istio-virtualservice
+
+  # External DNS arguments
+  extraArgs:
+    - --log-level=info
+    - --log-format=json
+    - --interval=1m
+    - --min-event-sync-interval=5s
+    - --events
+    - --metrics-address=0.0.0.0:7979
+    - --txt-owner-id=external-dns-prod
+    - --txt-prefix=external-dns-
+    - --aws-zones-cache-duration=3h
+
+  # Resources - higher for production
+  resources:
+    limits:
+      cpu: 100m
+      memory: 100Mi
+    requests:
+      cpu: 50m
+      memory: 50Mi
+
+  # Security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Pod security context
+  podSecurityContext:
+    fsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+
+  # Node selector
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # Tolerations
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+
+  # Affinity - prefer system nodes with anti-affinity for HA
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: eks.amazonaws.com/nodegroup
+                operator: In
+                values: ["system"]
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: external-dns
+            topologyKey: kubernetes.io/hostname
+
+  # Priority class
+  priorityClassName: system-cluster-critical
+
+  # Deployment strategy
+  deploymentStrategy:
+    type: Recreate
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # Monitoring - enabled for production
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      app: external-dns
+
+  # Replica count - HA for production
+  replicaCount: 2
+
+  # Policy for record management
+  policy: sync  # More aggressive cleanup in production
+
+  # Registry for tracking DNS records
+  registry: txt
+
+  # Dry run mode (disabled for production)
+  dryRun: false
+
+  # Trigger loop on create/update/delete events in addition to regular interval
+  triggerLoopOnEvent: true
+
+  # Liveness and readiness probes
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 2
+    successThreshold: 1
+
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+    successThreshold: 1
+
+  # Production-specific monitoring and logging
+  monitoring:
+    enabled: true
+    
+  logging:
+    level: info
+    format: json

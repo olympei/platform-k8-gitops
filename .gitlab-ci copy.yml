@@ -1,0 +1,608 @@
+# GitLab CI/CD Pipeline for EKS Add-ons
+#
+# This pipeline supports selective chart installation and uninstallation using environment variables:
+#
+# Chart Installation Control Variables (set to "false", "0", or "no" to disable):
+#   INSTALL_AWS_EFS_CSI_DRIVER     - Controls aws-efs-csi-driver chart installation
+#   INSTALL_EXTERNAL_SECRETS_OPERATOR - Controls external-secrets-operator chart installation
+#   INSTALL_INGRESS_NGINX          - Controls ingress-nginx chart installation
+#   INSTALL_POD_IDENTITY           - Controls pod-identity chart installation
+#
+# Chart Uninstallation Control Variables (set to "true", "1", or "yes" to enable):
+#   UNINSTALL_AWS_EFS_CSI_DRIVER     - Controls aws-efs-csi-driver chart uninstallation
+#   UNINSTALL_EXTERNAL_SECRETS_OPERATOR - Controls external-secrets-operator chart uninstallation
+#   UNINSTALL_INGRESS_NGINX          - Controls ingress-nginx chart uninstallation
+#   UNINSTALL_POD_IDENTITY           - Controls pod-identity chart uninstallation
+#
+# Environment Variables:
+#   HELM_RELEASES_DEV              - Comma-separated list of charts for dev (optional)
+#   HELM_RELEASES_PROD             - Comma-separated list of charts for prod (optional)
+#   DEV_KUBECONFIG_B64             - Base64 encoded kubeconfig for dev cluster
+#   PROD_KUBECONFIG_B64            - Base64 encoded kubeconfig for prod cluster
+#
+# Namespace Override Variables:
+#   HELM_NAMESPACE_AWS_EFS_CSI_DRIVER     - Override namespace for EFS CSI driver
+#   HELM_NAMESPACE_EXTERNAL_SECRETS_OPERATOR - Override namespace for External Secrets
+#   HELM_NAMESPACE_INGRESS_NGINX          - Override namespace for Ingress NGINX
+#   HELM_NAMESPACE_POD_IDENTITY           - Override namespace for Pod Identity
+#
+# Usage Examples:
+#   Installation:
+#     - Deploy all charts: Run deploy:helm:dev or deploy:helm:prod
+#     - Deploy specific chart: Run deploy:efs-csi:dev or deploy:external-secrets:prod
+#     - Skip a chart: Set INSTALL_INGRESS_NGINX=false in CI/CD variables
+#   
+#   Uninstallation:
+#     - Uninstall all marked charts: Run uninstall:helm:dev or uninstall:helm:prod
+#     - Uninstall specific chart: Run uninstall:efs-csi:dev or uninstall:external-secrets:prod
+#     - Mark chart for uninstall: Set UNINSTALL_INGRESS_NGINX=true in CI/CD variables
+#
+# Safety Notes:
+#   - Uninstall jobs require manual trigger for safety
+#   - Individual chart uninstalls include confirmation prompts
+#   - Charts are uninstalled in reverse order to handle dependencies
+#
+
+stages:
+  - validate
+  - plan
+  - deploy
+  - verify
+  - uninstall
+
+default:
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache bash curl git jq yq kubectl helm
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
+    - export KUBECONFIG=~/.kube/config
+    - helm version
+    - kubectl version --client
+
+validate:helm:
+  stage: validate
+  script:
+    - |
+      echo "🧩 Linting Helm charts..."
+      
+      # Function to check if chart should be validated
+      should_validate_chart() {
+        local chart_name=$1
+        local enable_var="INSTALL_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local enable_value=${!enable_var}
+        
+        # Default to true if variable not set
+        if [ -z "$enable_value" ]; then
+          return 0
+        fi
+        
+        # Check if explicitly disabled
+        if [ "$enable_value" = "false" ] || [ "$enable_value" = "0" ] || [ "$enable_value" = "no" ]; then
+          return 1
+        fi
+        
+        return 0
+      }
+      
+      LINT_ERRORS=0
+      for chart in charts/*; do
+        [ -d "$chart" ] || continue
+        chart_name=$(basename "$chart")
+        
+        if should_validate_chart "$chart_name"; then
+          echo "✅ Linting $chart ..."
+          if ! helm lint "$chart"; then
+            echo "❌ Lint failed for $chart"
+            LINT_ERRORS=$((LINT_ERRORS + 1))
+          fi
+        else
+          echo "⏭️  Skipping lint for $chart (disabled)"
+        fi
+      done
+      
+      if [ $LINT_ERRORS -gt 0 ]; then
+        echo "❌ $LINT_ERRORS chart(s) failed linting"
+        exit 1
+      fi
+      
+      echo "✅ All enabled charts passed linting"
+  only: [merge_requests, main]
+
+validate:kustomize:
+  stage: validate
+  script:
+    - echo "🧩 Rendering Kustomize overlays..."
+    - for env in dev prod; do
+        echo "Rendering environment: $env";
+        kubectl kustomize k8s-resources/environments/$env > /tmp/$env.yaml;
+        test -s /tmp/$env.yaml;
+      done
+  artifacts:
+    paths:
+      - /tmp/dev.yaml
+      - /tmp/prod.yaml
+  only: [merge_requests, main]
+
+plan:
+  stage: plan
+  script:
+    - echo "🔍 Kustomize diff for dev"
+    - kubectl diff -k k8s-resources/environments/dev || true
+  only: [merge_requests]
+  when: manual
+
+.deploy_helm_hybrid:
+  stage: deploy
+  script:
+    - |
+      echo "🚀 Deploying Helm add-ons for $ENVIRONMENT..."
+      
+      # Function to check if chart should be installed
+      should_install_chart() {
+        local chart_name=$1
+        local enable_var="INSTALL_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local enable_value=${!enable_var}
+        
+        # Default to true if variable not set
+        if [ -z "$enable_value" ]; then
+          return 0
+        fi
+        
+        # Check if explicitly disabled
+        if [ "$enable_value" = "false" ] || [ "$enable_value" = "0" ] || [ "$enable_value" = "no" ]; then
+          return 1
+        fi
+        
+        return 0
+      }
+      
+      # Determine which charts to deploy
+      if [ -z "$HELM_RELEASES" ]; then
+        echo "No HELM_RELEASES variable defined. Auto-detecting charts..."
+        mapfile -t ALL_RELEASES < <(find charts -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
+      else
+        IFS=',' read -ra ALL_RELEASES <<< "${HELM_RELEASES}"
+      fi
+      
+      # Filter charts based on installation flags
+      RELEASES=()
+      for release in "${ALL_RELEASES[@]}"; do
+        if should_install_chart "$release"; then
+          RELEASES+=("$release")
+          echo "✅ Chart '$release' will be installed"
+        else
+          echo "⏭️  Chart '$release' will be skipped (disabled)"
+        fi
+      done
+      
+      if [ ${#RELEASES[@]} -eq 0 ]; then
+        echo "⚠️  No charts to install. All charts are disabled or none found."
+        exit 0
+      fi
+      
+      echo ""
+      echo "📋 Charts to install: ${RELEASES[*]}"
+      echo ""
+
+      for release in "${RELEASES[@]}"; do
+        CHART_DIR="charts/${release}"
+        RELEASE_NAME=$(basename "$release")
+        NS_VAR="HELM_NAMESPACE_$(echo $RELEASE_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        NAMESPACE=${!NS_VAR:-$RELEASE_NAME}
+        VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}.yaml"
+
+        echo "-------------------------------------------------"
+        echo "Helm Upgrade: $RELEASE_NAME in ns=$NAMESPACE (chart=$CHART_DIR)"
+        echo "Using values: $VALUES_FILE"
+        echo "-------------------------------------------------"
+
+        # Check if values file exists
+        if [ ! -f "$VALUES_FILE" ]; then
+          echo "⚠️  Values file not found: $VALUES_FILE"
+          echo "Skipping chart: $RELEASE_NAME"
+          continue
+        fi
+
+        helm dependency update "$CHART_DIR" || true
+        helm upgrade --install "$RELEASE_NAME" "$CHART_DIR" \
+          -n "$NAMESPACE" --create-namespace \
+          -f "$VALUES_FILE" \
+          --wait --timeout 10m
+
+        echo ""
+        kubectl -n "$NAMESPACE" get pods
+        echo ""
+      done
+  only: [main]
+  when: manual
+
+# Template for individual chart deployment
+.deploy_single_chart:
+  stage: deploy
+  script:
+    - |
+      CHART_NAME="$CHART_TO_DEPLOY"
+      CHART_DIR="charts/${CHART_NAME}"
+      RELEASE_NAME="$CHART_NAME"
+      NS_VAR="HELM_NAMESPACE_$(echo $RELEASE_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+      NAMESPACE=${!NS_VAR:-$RELEASE_NAME}
+      VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}.yaml"
+      
+      echo "🚀 Deploying single chart: $CHART_NAME for $ENVIRONMENT..."
+      
+      if [ ! -d "$CHART_DIR" ]; then
+        echo "❌ Chart directory not found: $CHART_DIR"
+        exit 1
+      fi
+      
+      if [ ! -f "$VALUES_FILE" ]; then
+        echo "❌ Values file not found: $VALUES_FILE"
+        exit 1
+      fi
+      
+      echo "-------------------------------------------------"
+      echo "Helm Upgrade: $RELEASE_NAME in ns=$NAMESPACE (chart=$CHART_DIR)"
+      echo "Using values: $VALUES_FILE"
+      echo "-------------------------------------------------"
+      
+      helm dependency update "$CHART_DIR" || true
+      helm upgrade --install "$RELEASE_NAME" "$CHART_DIR" \
+        -n "$NAMESPACE" --create-namespace \
+        -f "$VALUES_FILE" \
+        --wait --timeout 10m
+      
+      echo ""
+      kubectl -n "$NAMESPACE" get pods
+  only: [main]
+  when: manual
+
+# All charts deployment jobs
+deploy:helm:dev:
+  extends: .deploy_helm_hybrid
+  variables:
+    ENVIRONMENT: dev
+    HELM_RELEASES: $HELM_RELEASES_DEV
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+deploy:helm:prod:
+  extends: .deploy_helm_hybrid
+  variables:
+    ENVIRONMENT: prod
+    HELM_RELEASES: $HELM_RELEASES_PROD
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+# Individual chart deployment jobs for dev
+deploy:efs-csi:dev:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_DEPLOY: aws-efs-csi-driver
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+deploy:external-secrets:dev:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_DEPLOY: external-secrets-operator
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+deploy:ingress-nginx:dev:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_DEPLOY: ingress-nginx
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+deploy:pod-identity:dev:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_DEPLOY: pod-identity
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+# Individual chart deployment jobs for prod
+deploy:efs-csi:prod:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_DEPLOY: aws-efs-csi-driver
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+deploy:external-secrets:prod:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_DEPLOY: external-secrets-operator
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+deploy:ingress-nginx:prod:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_DEPLOY: ingress-nginx
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+deploy:pod-identity:prod:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_DEPLOY: pod-identity
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+# Template for uninstalling all charts
+.uninstall_helm_all:
+  stage: uninstall
+  script:
+    - |
+      echo "🗑️  Uninstalling Helm add-ons for $ENVIRONMENT..."
+      
+      # Function to check if chart should be uninstalled
+      should_uninstall_chart() {
+        local chart_name=$1
+        local uninstall_var="UNINSTALL_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local uninstall_value=${!uninstall_var}
+        
+        # Default to false if variable not set (safety first)
+        if [ -z "$uninstall_value" ]; then
+          return 1
+        fi
+        
+        # Check if explicitly enabled
+        if [ "$uninstall_value" = "true" ] || [ "$uninstall_value" = "1" ] || [ "$uninstall_value" = "yes" ]; then
+          return 0
+        fi
+        
+        return 1
+      }
+      
+      # Get all installed releases
+      echo "📋 Finding installed Helm releases..."
+      mapfile -t INSTALLED_RELEASES < <(helm list --all-namespaces -q 2>/dev/null || echo "")
+      
+      if [ ${#INSTALLED_RELEASES[@]} -eq 0 ]; then
+        echo "ℹ️  No Helm releases found to uninstall"
+        exit 0
+      fi
+      
+      echo "Found releases: ${INSTALLED_RELEASES[*]}"
+      
+      # Determine which charts to uninstall
+      if [ -z "$HELM_RELEASES" ]; then
+        echo "No HELM_RELEASES variable defined. Checking all known charts..."
+        mapfile -t ALL_RELEASES < <(find charts -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
+      else
+        IFS=',' read -ra ALL_RELEASES <<< "${HELM_RELEASES}"
+      fi
+      
+      # Filter charts based on uninstall flags
+      RELEASES_TO_UNINSTALL=()
+      for release in "${ALL_RELEASES[@]}"; do
+        if should_uninstall_chart "$release"; then
+          # Check if release is actually installed
+          if printf '%s\n' "${INSTALLED_RELEASES[@]}" | grep -q "^${release}$"; then
+            RELEASES_TO_UNINSTALL+=("$release")
+            echo "🗑️  Chart '$release' will be uninstalled"
+          else
+            echo "ℹ️  Chart '$release' is not installed, skipping"
+          fi
+        else
+          echo "⏭️  Chart '$release' will be kept (not marked for uninstall)"
+        fi
+      done
+      
+      if [ ${#RELEASES_TO_UNINSTALL[@]} -eq 0 ]; then
+        echo "ℹ️  No charts marked for uninstallation"
+        exit 0
+      fi
+      
+      echo ""
+      echo "🗑️  Charts to uninstall: ${RELEASES_TO_UNINSTALL[*]}"
+      echo ""
+      
+      # Uninstall in reverse order (to handle dependencies)
+      for ((i=${#RELEASES_TO_UNINSTALL[@]}-1; i>=0; i--)); do
+        release="${RELEASES_TO_UNINSTALL[i]}"
+        NS_VAR="HELM_NAMESPACE_$(echo $release | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        NAMESPACE=${!NS_VAR:-$release}
+        
+        echo "-------------------------------------------------"
+        echo "Uninstalling: $release from namespace $NAMESPACE"
+        echo "-------------------------------------------------"
+        
+        # Get release info before uninstalling
+        helm status "$release" -n "$NAMESPACE" 2>/dev/null || echo "Release status unavailable"
+        
+        # Uninstall the release
+        if helm uninstall "$release" -n "$NAMESPACE" --wait --timeout 5m; then
+          echo "✅ Successfully uninstalled $release"
+        else
+          echo "❌ Failed to uninstall $release"
+          # Continue with other releases even if one fails
+        fi
+        
+        echo ""
+      done
+      
+      echo "🏁 Uninstall process completed"
+  only: [main]
+  when: manual
+
+# Template for uninstalling a single chart
+.uninstall_single_chart:
+  stage: uninstall
+  script:
+    - |
+      CHART_NAME="$CHART_TO_UNINSTALL"
+      RELEASE_NAME="$CHART_NAME"
+      NS_VAR="HELM_NAMESPACE_$(echo $RELEASE_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+      NAMESPACE=${!NS_VAR:-$RELEASE_NAME}
+      
+      echo "🗑️  Uninstalling single chart: $CHART_NAME from $ENVIRONMENT..."
+      
+      # Check if release exists
+      if ! helm status "$RELEASE_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo "ℹ️  Release '$RELEASE_NAME' not found in namespace '$NAMESPACE'"
+        echo "Nothing to uninstall"
+        exit 0
+      fi
+      
+      echo "-------------------------------------------------"
+      echo "Uninstalling: $RELEASE_NAME from namespace $NAMESPACE"
+      echo "-------------------------------------------------"
+      
+      # Show current status
+      helm status "$RELEASE_NAME" -n "$NAMESPACE"
+      
+      # Show resources that will be deleted
+      echo ""
+      echo "Resources to be deleted:"
+      kubectl get all -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" 2>/dev/null || echo "No resources found with instance label"
+      
+      echo ""
+      read -p "Are you sure you want to uninstall $RELEASE_NAME? (y/N): " -n 1 -r
+      echo
+      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "❌ Uninstall cancelled"
+        exit 1
+      fi
+      
+      # Uninstall the release
+      if helm uninstall "$RELEASE_NAME" -n "$NAMESPACE" --wait --timeout 10m; then
+        echo "✅ Successfully uninstalled $RELEASE_NAME"
+        
+        # Check for remaining resources
+        echo ""
+        echo "Checking for remaining resources..."
+        kubectl get all -n "$NAMESPACE" 2>/dev/null || echo "Namespace may have been deleted"
+        
+        # Optionally delete namespace if empty
+        if kubectl get all -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | grep -q "^0$"; then
+          echo "Namespace $NAMESPACE appears empty, consider deleting it manually if no longer needed"
+        fi
+      else
+        echo "❌ Failed to uninstall $RELEASE_NAME"
+        exit 1
+      fi
+  only: [main]
+  when: manual
+
+# All charts uninstall jobs
+uninstall:helm:dev:
+  extends: .uninstall_helm_all
+  variables:
+    ENVIRONMENT: dev
+    HELM_RELEASES: $HELM_RELEASES_DEV
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:helm:prod:
+  extends: .uninstall_helm_all
+  variables:
+    ENVIRONMENT: prod
+    HELM_RELEASES: $HELM_RELEASES_PROD
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+# Individual chart uninstall jobs for dev
+uninstall:efs-csi:dev:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_UNINSTALL: aws-efs-csi-driver
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:external-secrets:dev:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_UNINSTALL: external-secrets-operator
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:ingress-nginx:dev:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_UNINSTALL: ingress-nginx
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:pod-identity:dev:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_UNINSTALL: pod-identity
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+# Individual chart uninstall jobs for prod
+uninstall:efs-csi:prod:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_UNINSTALL: aws-efs-csi-driver
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+uninstall:external-secrets:prod:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_UNINSTALL: external-secrets-operator
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+uninstall:ingress-nginx:prod:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_UNINSTALL: ingress-nginx
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+uninstall:pod-identity:prod:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_UNINSTALL: pod-identity
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+.deploy_kustomize:
+  stage: deploy
+  script:
+    - echo "📦 Applying native Kustomize resources for $ENVIRONMENT..."
+    - kubectl apply -k k8s-resources/environments/$ENVIRONMENT
+  only: [main]
+  when: manual
+
+deploy:kustomize:dev:
+  extends: .deploy_kustomize
+  variables:
+    ENVIRONMENT: dev
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+  needs: ["deploy:helm:dev"]
+
+deploy:kustomize:prod:
+  extends: .deploy_kustomize
+  variables:
+    ENVIRONMENT: prod
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+  needs: ["deploy:helm:prod"]
+
+.verify_template:
+  stage: verify
+  script:
+    - echo "✅ Verifying cluster state for $ENVIRONMENT ..."
+    - kubectl get ns
+    - kubectl get ingress -A
+    - kubectl get pods -A | grep -E "external-secrets|nginx|efs|pod-identity" || true
+    - kubectl get sc,pv,pvc
+  only: [main]
+  when: manual
+
+verify:dev:
+  extends: .verify_template
+  variables:
+    ENVIRONMENT: dev
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+  needs: ["deploy:kustomize:dev"]
+
+verify:prod:
+  extends: .verify_template
+  variables:
+    ENVIRONMENT: prod
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+  needs: ["deploy:kustomize:prod"]

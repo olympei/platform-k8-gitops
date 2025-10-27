@@ -1,0 +1,132 @@
+# Kubernetes Secrets Store CSI Driver configuration for prod environment
+
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+# Secrets Store CSI Driver configuration
+secrets-store-csi-driver:
+  # Enable the CSI driver
+  enabled: true
+  
+  # Sync mounted secrets to Kubernetes secrets
+  syncSecret:
+    enabled: true
+  
+  # Enable secret rotation
+  enableSecretRotation: true
+  rotationPollInterval: "5m"
+  
+  # Node driver registrar
+  nodeDriverRegistrar:
+    resources:
+      limits:
+        cpu: 200m
+        memory: 200Mi
+      requests:
+        cpu: 20m
+        memory: 40Mi
+  
+  # CSI driver
+  driver:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 500Mi
+      requests:
+        cpu: 100m
+        memory: 200Mi
+  
+  # Linux configuration
+  linux:
+    enabled: true
+    kubeletRootDir: /var/lib/kubelet
+    
+    # Provider volume mount
+    providersDir: /etc/kubernetes/secrets-store-csi-providers
+    
+    # Node selector for Linux nodes
+    nodeSelector:
+      kubernetes.io/os: linux
+    
+    # Tolerations
+    tolerations:
+      - operator: Exists
+
+# AWS Secrets and Configuration Provider (ASCP)
+awsProvider:
+  enabled: true
+  
+  # ASCP image configuration
+  image:
+    repository: public.ecr.aws/aws-secrets-manager/secrets-store-csi-driver-provider-aws
+    tag: "1.0.r2-50-g5b4aca1-2023.06.09.21.19"
+    pullPolicy: IfNotPresent
+  
+  # Resources for ASCP
+  resources:
+    limits:
+      cpu: 100m
+      memory: 200Mi
+    requests:
+      cpu: 50m
+      memory: 100Mi
+  
+  # Node selector
+  nodeSelector:
+    kubernetes.io/os: linux
+  
+  # Tolerations
+  tolerations:
+    - operator: Exists
+  
+  # Service account for ASCP
+  serviceAccount:
+    create: true
+    name: secrets-store-csi-driver-provider-aws
+    annotations:
+      # IRSA annotation (used when authMethod is "irsa")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-prod"
+      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-prod"
+
+# Pod Identity specific configuration
+podIdentity:
+  enabled: true
+  roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-prod"
+
+# Example SecretProviderClass for AWS Secrets Manager
+secretProviderClass:
+  enabled: true
+  name: aws-secrets
+  spec:
+    provider: aws
+    parameters:
+      region: us-east-1
+      objects: |
+        - objectName: "prod/myapp/database"
+          objectType: "secretsmanager"
+          objectAlias: "database-credentials"
+        - objectName: "/prod/myapp/config"
+          objectType: "ssmparameter"
+          objectAlias: "app-config"
+        - objectName: "prod/myapp/api-keys"
+          objectType: "secretsmanager"
+          objectAlias: "api-keys"
+    # Sync to Kubernetes secret
+    secretObjects:
+      - secretName: myapp-secrets
+        type: Opaque
+        data:
+          - objectName: "database-credentials"
+            key: "db-password"
+          - objectName: "app-config"
+            key: "config"
+          - objectName: "api-keys"
+            key: "api-key"
+
+# Production-specific monitoring and logging
+monitoring:
+  enabled: true
+  
+logging:
+  level: info

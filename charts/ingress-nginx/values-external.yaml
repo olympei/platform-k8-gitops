@@ -1,0 +1,139 @@
+# NGINX Ingress Controller configuration for EXTERNAL (internet-facing) load balancer
+# This file can be used as an alternative to internal load balancer configuration
+
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+# Load balancer configuration for external access
+loadBalancer:
+  # Set to "internet-facing" for public load balancer
+  scheme: "internet-facing"
+  # Specify PUBLIC subnets for internet-facing load balancer
+  subnets:
+    # Public subnets for internet-facing load balancer
+    - "subnet-public1"  # Replace with your public subnet ID
+    - "subnet-public2"  # Replace with your public subnet ID
+  # Optional: Specify VPC for additional security
+  vpc: "vpc-abcdef123"   # Replace with your VPC ID
+
+# SSL/TLS Certificate configuration for external access
+ssl:
+  # Enable SSL termination at the load balancer level
+  enabled: true
+  # ACM certificate ARN for SSL termination (public certificate)
+  certificateArn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/public-12345678-1234-1234-1234-123456789012"
+  # SSL policy for the load balancer
+  sslPolicy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+  # Additional certificate ARNs for multi-domain support
+  additionalCertificates: []
+
+controller:
+  replicaCount: 2
+  
+  # Ingress class configuration
+  ingressClassResource:
+    name: nginx-external
+    enabled: true
+    default: false
+  
+  # Service configuration for external load balancer
+  service:
+    type: LoadBalancer
+    annotations:
+      # Use Network Load Balancer
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      # Internet-facing load balancer
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+      # Specify PUBLIC subnets for load balancer
+      service.beta.kubernetes.io/aws-load-balancer-subnets: "subnet-public1,subnet-public2"
+      # Cross-zone load balancing
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+      # SSL Certificate configuration
+      service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/public-12345678-1234-1234-1234-123456789012"
+      service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+      service.beta.kubernetes.io/aws-load-balancer-ssl-negotiation-policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+      # Backend protocol for SSL termination
+      service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+      # Health check configuration
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "http"
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/healthz"
+      service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "10254"
+      # Connection draining
+      service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+      service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "60"
+      # Additional tags
+      service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Environment=prod,Project=eks-addons,Access=public"
+    
+    # Configure both HTTP and HTTPS ports
+    ports:
+      http:
+        port: 80
+        protocol: TCP
+        targetPort: http
+      https:
+        port: 443
+        protocol: TCP
+        targetPort: http  # SSL terminated at LB, backend uses HTTP
+    
+    # External traffic policy for preserving source IP
+    externalTrafficPolicy: Local
+    
+    # Load balancer source ranges (restrict to specific IPs if needed)
+    # Comment out or modify for public access
+    # loadBalancerSourceRanges:
+    #   - "203.0.113.0/24"  # Your office IP range
+    #   - "198.51.100.0/24" # Another allowed IP range
+  
+  # Metrics configuration
+  metrics:
+    enabled: true
+    service:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "10254"
+  
+  # Service account configuration
+  serviceAccount:
+    create: true
+    name: ingress-nginx-external
+    annotations:
+      # IRSA annotation (used when authMethod is "irsa")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-IngressNginx-Role-prod"
+      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-IngressNginx-Role-prod"
+  
+  # Resource configuration
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  # Configuration for external access
+  config:
+    # Enable real IP forwarding
+    use-forwarded-headers: "true"
+    compute-full-forwarded-for: "true"
+    use-proxy-protocol: "false"
+    # SSL configuration
+    ssl-redirect: "true"
+    force-ssl-redirect: "true"
+    # Security headers
+    add-headers: "ingress-nginx/custom-headers"
+    # Rate limiting
+    limit-rps: "100"
+    limit-connections: "50"
+
+# Pod Identity specific configuration
+podIdentity:
+  enabled: true
+  roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-IngressNginx-Role-prod"
+
+# Custom headers ConfigMap for security
+customHeaders:
+  X-Frame-Options: "DENY"
+  X-Content-Type-Options: "nosniff"
+  X-XSS-Protection: "1; mode=block"
+  Strict-Transport-Security: "max-age=31536000; includeSubDomains"

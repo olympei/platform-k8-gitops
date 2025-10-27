@@ -1,0 +1,35 @@
+installCRDs: true
+
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+serviceAccount:
+  create: true
+  name: external-secrets-sa
+  annotations:
+    # IRSA annotation (used when authMethod is "irsa")
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalSecrets-Role-prod"
+    # Pod Identity annotations (used when authMethod is "pod-identity")
+    eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalSecrets-Role-prod"
+
+metrics:
+  enabled: true
+
+# Pod Identity specific configuration
+podIdentity:
+  enabled: true
+  roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalSecrets-Role-prod"
+
+secretStore:
+  kind: ClusterSecretStore
+  metadata:
+    name: aws-secrets
+  spec:
+    provider:
+      aws:
+        service: SecretsManager
+        region: us-east-1
+        # Pod Identity authentication
+        auth:
+          podIdentity:
+            roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalSecrets-Role-prod"

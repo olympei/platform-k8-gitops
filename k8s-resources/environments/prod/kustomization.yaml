@@ -1,0 +1,4 @@
+resources:
+  - ../../ingress/overlays/prod
+  - ../../external-secrets/overlays/prod
+  - ../../storage/overlays/prod

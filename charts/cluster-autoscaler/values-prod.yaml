@@ -1,0 +1,132 @@
+# AWS Cluster Autoscaler configuration for prod environment
+
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+# Cluster Autoscaler configuration
+autoDiscovery:
+  clusterName: "CLUSTER_NAME"  # Replace with actual cluster name
+  enabled: true
+
+# AWS region
+awsRegion: us-east-1
+
+# Image configuration
+image:
+  repository: registry.k8s.io/autoscaling/cluster-autoscaler
+  tag: v1.28.2
+  pullPolicy: IfNotPresent
+
+# Service account configuration
+serviceAccount:
+  create: true
+  name: cluster-autoscaler
+  annotations:
+    # IRSA annotation (used when authMethod is "irsa")
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ClusterAutoscaler-Role-prod"
+    # Pod Identity annotations (used when authMethod is "pod-identity")
+    eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ClusterAutoscaler-Role-prod"
+
+# Pod Identity specific configuration
+podIdentity:
+  enabled: true
+  roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ClusterAutoscaler-Role-prod"
+
+# Autoscaler configuration
+extraArgs:
+  logtostderr: true
+  stderrthreshold: info
+  v: 2  # Less verbose logging for prod
+  # Skip nodes with local storage
+  skip-nodes-with-local-storage: false
+  # Skip nodes with system pods
+  skip-nodes-with-system-pods: false
+  # Expander strategy
+  expander: least-waste
+  # Node group auto-discovery
+  node-group-auto-discovery: asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/CLUSTER_NAME
+  # Balance similar node groups
+  balance-similar-node-groups: true
+  # Scale down configuration
+  scale-down-enabled: true
+  scale-down-delay-after-add: 10m
+  scale-down-unneeded-time: 10m
+  scale-down-utilization-threshold: 0.5
+  # Max node provision time
+  max-node-provision-time: 15m
+  # Max nodes total
+  max-nodes-total: 100
+  # Cores and memory limits
+  cores-total: "0:1000"
+  memory-total: "0:1000Gi"
+
+# Resources - higher for production
+resources:
+  limits:
+    cpu: 200m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 600Mi
+
+# Node selector
+nodeSelector:
+  kubernetes.io/os: linux
+
+# Tolerations
+tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+
+# Affinity - prefer to run on system nodes
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: eks.amazonaws.com/nodegroup
+              operator: In
+              values: ["system"]
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+
+# Pod security context
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+
+# Priority class
+priorityClassName: system-cluster-critical
+
+# Deployment strategy
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+
+# Monitoring - enabled for production
+podMonitor:
+  enabled: true
+  namespace: monitoring
+  interval: 30s
+  path: /metrics
+
+# Production-specific settings
+replicaCount: 1
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Additional monitoring and logging
+monitoring:
+  enabled: true
+  
+logging:
+  level: info

@@ -1,0 +1,10 @@
+resources:
+  - ../../base/external-secret.yaml
+patches:
+  - target:
+      kind: ExternalSecret
+      name: app-secret
+    patch: |
+      - op: replace
+        path: /spec/data/0/remoteRef/key
+        value: dev/db/password

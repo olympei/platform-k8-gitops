@@ -1,0 +1,31 @@
+# Example Terraform variables file
+# Copy this to terraform.tfvars and update with your values
+
+# AWS Configuration
+aws_account_id = "123456789012"
+aws_region     = "us-east-1"
+
+# EKS Cluster Configuration
+cluster_name = "my-eks-cluster"
+
+# OIDC Provider Configuration
+# Get these values from your EKS cluster:
+# aws eks describe-cluster --name my-eks-cluster --query "cluster.identity.oidc.issuer"
+oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B716D3041E"
+oidc_provider_url = "https://oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B716D3041E"
+
+# Environment
+environment = "dev"
+
+# Authentication Method
+# Set to true for Pod Identity, false for IRSA
+enable_pod_identity = true
+
+# Tags
+tags = {
+  Terraform   = "true"
+  Environment = "dev"
+  Project     = "eks-addons"
+  Owner       = "platform-team"
+  CostCenter  = "engineering"
+}

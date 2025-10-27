@@ -1,0 +1,145 @@
+# External DNS configuration for dev environment
+
+# Authentication method: "pod-identity" or "irsa"
+authMethod: "pod-identity"
+
+# External DNS configuration
+external-dns:
+  # Image configuration
+  image:
+    repository: registry.k8s.io/external-dns/external-dns
+    tag: v0.14.2
+    pullPolicy: IfNotPresent
+
+  # Service account configuration
+  serviceAccount:
+    create: true
+    name: external-dns
+    annotations:
+      # IRSA annotation (used when authMethod is "irsa")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-dev"
+      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-dev"
+
+  # Pod Identity specific configuration
+  podIdentity:
+    enabled: true
+    roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-dev"
+
+  # Provider configuration
+  provider: aws
+
+  # AWS specific configuration
+  aws:
+    region: us-east-1
+    zoneType: private  # public, private, or both
+    assumeRoleArn: ""  # Optional: assume role for cross-account access
+    batchChangeSize: 1000
+    batchChangeInterval: 1s
+    evaluateTargetHealth: true
+
+  # Domain filters - restrict to specific domains
+  domainFilters:
+    - "dev.example.com"  # Replace with your dev domain
+
+  # Zone ID filters - restrict to specific hosted zones
+  zoneIdFilters: []
+
+  # Annotation filters - only process resources with specific annotations
+  annotationFilter: ""
+
+  # Sources to watch for DNS records
+  sources:
+    - service
+    - ingress
+    - istio-gateway
+    - istio-virtualservice
+
+  # External DNS arguments
+  extraArgs:
+    - --log-level=info
+    - --log-format=text
+    - --interval=1m
+    - --min-event-sync-interval=5s
+    - --events
+    - --metrics-address=0.0.0.0:7979
+    - --txt-owner-id=external-dns-dev
+    - --txt-prefix=external-dns-
+
+  # Resources
+  resources:
+    limits:
+      cpu: 50m
+      memory: 50Mi
+    requests:
+      cpu: 50m
+      memory: 50Mi
+
+  # Security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Pod security context
+  podSecurityContext:
+    fsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+
+  # Node selector
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # Tolerations
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+
+  # Affinity - prefer system nodes
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: eks.amazonaws.com/nodegroup
+                operator: In
+                values: ["system"]
+
+  # Priority class
+  priorityClassName: system-cluster-critical
+
+  # Deployment strategy
+  deploymentStrategy:
+    type: Recreate
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false  # Single replica in dev
+
+  # Monitoring
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+  # Replica count
+  replicaCount: 1
+
+  # Policy for record management
+  policy: upsert-only  # sync, upsert-only
+
+  # Registry for tracking DNS records
+  registry: txt
+
+  # Dry run mode (for testing)
+  dryRun: false
+
+  # Trigger loop on create/update/delete events in addition to regular interval
+  triggerLoopOnEvent: false
