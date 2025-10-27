@@ -9,10 +9,25 @@ aws_region     = "us-east-1"
 cluster_name = "my-eks-cluster"
 
 # OIDC Provider Configuration
-# Get these values from your EKS cluster:
-# aws eks describe-cluster --name my-eks-cluster --query "cluster.identity.oidc.issuer"
-oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B716D3041E"
+# Get these values from your EKS cluster using one of these methods:
+#
+# Method 1: AWS CLI
+# aws eks describe-cluster --name my-eks-cluster --query "cluster.identity.oidc.issuer" --output text
+#
+# Method 2: Use the automation script
+# ./scripts/get-oidc-info.sh my-eks-cluster us-east-1
+#
+# Method 3: AWS Console
+# Go to EKS → Clusters → Your Cluster → Configuration → Details → OpenID Connect provider URL
+#
+# Examples of OIDC Provider URLs by region:
+# US East 1:      https://oidc.eks.us-east-1.amazonaws.com/id/A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6
+# US West 2:      https://oidc.eks.us-west-2.amazonaws.com/id/B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7
+# EU West 1:      https://oidc.eks.eu-west-1.amazonaws.com/id/C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8
+# AP Southeast 1: https://oidc.eks.ap-southeast-1.amazonaws.com/id/D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9
+
 oidc_provider_url = "https://oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B716D3041E"
+oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B716D3041E"
 
 # Environment
 environment = "dev"
