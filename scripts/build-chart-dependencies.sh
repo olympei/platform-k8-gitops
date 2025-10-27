@@ -35,9 +35,8 @@ echo "📦 Building dependencies for chart: $CHART_NAME"
 echo "Chart directory: $CHART_DIR"
 echo ""
 
-# Add required repositories based on Chart.yaml dependencies
-echo "Detecting required Helm repositories..."
-REPOS_ADDED=0
+# Extract and add repositories from Chart.yaml dependencies
+echo "Extracting repositories from Chart.yaml..."
 
 if [ "$SKIP_TLS" = "true" ]; then
   echo "⚠️  Skipping TLS verification"
@@ -46,44 +45,21 @@ else
   TLS_FLAG=""
 fi
 
-if grep -q "charts.external-secrets.io" "$CHART_DIR/Chart.yaml"; then
-  echo "  → Adding external-secrets repository"
-  helm repo add external-secrets https://charts.external-secrets.io $TLS_FLAG || true
-  REPOS_ADDED=$((REPOS_ADDED + 1))
-fi
+# Extract unique repository URLs from Chart.yaml
+REPOS=$(grep -A 10 "dependencies:" "$CHART_DIR/Chart.yaml" | grep "repository:" | awk '{print $2}' | tr -d '"' | sort -u)
 
-if grep -q "aws.github.io/eks-charts" "$CHART_DIR/Chart.yaml"; then
-  echo "  → Adding eks repository"
-  helm repo add eks https://aws.github.io/eks-charts $TLS_FLAG || true
+REPOS_ADDED=0
+for repo_url in $REPOS; do
+  # Generate a simple repo name from the URL (e.g., charts.external-secrets.io -> charts-external-secrets-io)
+  repo_name=$(echo "$repo_url" | sed 's|https://||' | sed 's|http://||' | sed 's|/.*||' | tr '.' '-')
+  echo "  → Adding repository: $repo_name"
+  echo "    URL: $repo_url"
+  helm repo add "$repo_name" "$repo_url" $TLS_FLAG || true
   REPOS_ADDED=$((REPOS_ADDED + 1))
-fi
-
-if grep -q "kubernetes.github.io/autoscaler" "$CHART_DIR/Chart.yaml"; then
-  echo "  → Adding autoscaler repository"
-  helm repo add autoscaler https://kubernetes.github.io/autoscaler $TLS_FLAG || true
-  REPOS_ADDED=$((REPOS_ADDED + 1))
-fi
-
-if grep -q "kubernetes.github.io/ingress-nginx" "$CHART_DIR/Chart.yaml"; then
-  echo "  → Adding ingress-nginx repository"
-  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx $TLS_FLAG || true
-  REPOS_ADDED=$((REPOS_ADDED + 1))
-fi
-
-if grep -q "kubernetes-sigs.github.io/metrics-server" "$CHART_DIR/Chart.yaml"; then
-  echo "  → Adding metrics-server repository"
-  helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server $TLS_FLAG || true
-  REPOS_ADDED=$((REPOS_ADDED + 1))
-fi
-
-if grep -q "kubernetes-sigs.github.io/secrets-store-csi-driver" "$CHART_DIR/Chart.yaml"; then
-  echo "  → Adding secrets-store-csi-driver repository"
-  helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts $TLS_FLAG || true
-  REPOS_ADDED=$((REPOS_ADDED + 1))
-fi
+done
 
 if [ $REPOS_ADDED -eq 0 ]; then
-  echo "  ℹ️  No known repositories detected in Chart.yaml"
+  echo "  ℹ️  No repositories found in Chart.yaml"
 else
   echo ""
   echo "Updating $REPOS_ADDED repository/repositories..."
