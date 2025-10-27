@@ -57,6 +57,7 @@
 
 stages:
   - validate
+  - test
   - plan
   - deploy
   - verify
@@ -136,6 +137,144 @@ validate:kustomize:
       - /tmp/dev.yaml
       - /tmp/prod.yaml
   only: [merge_requests, main]
+
+# ============================================================================
+# TEST STAGE - Dependency Management Tests
+# ============================================================================
+
+test:dependencies:
+  stage: test
+  script:
+    - |
+      echo "🧪 Testing chart dependency detection and download..."
+      echo ""
+      
+      # Set TLS skip for corporate proxies
+      export HELM_REPO_SKIP_TLS_VERIFY=true
+      
+      # Run the download script
+      bash scripts/download-all-dependencies.sh
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Verifying Downloaded Dependencies"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      
+      CHARTS_WITH_DEPS=0
+      CHARTS_MISSING_DEPS=0
+      
+      for chart_dir in charts/*; do
+        [ -d "$chart_dir" ] || continue
+        chart_name=$(basename "$chart_dir")
+        
+        # Check if chart has dependencies in Chart.yaml
+        if [ -f "$chart_dir/Chart.yaml" ] && grep -q "dependencies:" "$chart_dir/Chart.yaml"; then
+          CHARTS_WITH_DEPS=$((CHARTS_WITH_DEPS + 1))
+          
+          # Verify charts/ directory exists
+          if [ -d "$chart_dir/charts" ]; then
+            dep_count=$(ls -1 "$chart_dir/charts" | wc -l)
+            echo "✅ $chart_name: $dep_count dependency file(s)"
+          else
+            echo "❌ $chart_name: Missing charts/ directory"
+            CHARTS_MISSING_DEPS=$((CHARTS_MISSING_DEPS + 1))
+          fi
+          
+          # Verify Chart.lock exists
+          if [ -f "$chart_dir/Chart.lock" ]; then
+            echo "   ✓ Chart.lock present"
+          else
+            echo "   ⚠️  Chart.lock missing"
+          fi
+        fi
+      done
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Test Summary"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Charts with dependencies: $CHARTS_WITH_DEPS"
+      echo "Charts missing dependencies: $CHARTS_MISSING_DEPS"
+      
+      if [ $CHARTS_MISSING_DEPS -gt 0 ]; then
+        echo ""
+        echo "❌ Some charts failed to download dependencies"
+        exit 1
+      fi
+      
+      echo ""
+      echo "✅ All chart dependencies downloaded successfully!"
+  artifacts:
+    paths:
+      - charts/*/charts/
+      - charts/*/Chart.lock
+    expire_in: 1 day
+  only: [merge_requests, main]
+  when: manual
+
+test:package:
+  stage: test
+  script:
+    - |
+      echo "📦 Testing chart packaging..."
+      echo ""
+      
+      # Set TLS skip for corporate proxies
+      export HELM_REPO_SKIP_TLS_VERIFY=true
+      
+      # Run the packaging script non-interactively
+      OUTPUT_DIR="test-charts-$(date +%Y%m%d-%H%M%S)"
+      bash scripts/download-and-package-charts.sh "$OUTPUT_DIR" <<< "n"
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Verifying Package"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      
+      # Find the created package
+      PACKAGE=$(ls -t helm-charts-*.zip 2>/dev/null | head -1 || ls -t helm-charts-*.tar.gz 2>/dev/null | head -1)
+      
+      if [ -z "$PACKAGE" ]; then
+        echo "❌ Package file not found"
+        exit 1
+      fi
+      
+      echo "✅ Package created: $PACKAGE"
+      
+      # Show package size
+      PACKAGE_SIZE=$(du -h "$PACKAGE" | cut -f1)
+      echo "📊 Package size: $PACKAGE_SIZE"
+      
+      # Verify package contents
+      if [[ "$PACKAGE" == *.zip ]]; then
+        echo ""
+        echo "📋 Package contents (first 30 files):"
+        unzip -l "$PACKAGE" | head -30
+        
+        # Count files
+        FILE_COUNT=$(unzip -l "$PACKAGE" | tail -1 | awk '{print $2}')
+        echo ""
+        echo "📊 Total files in package: $FILE_COUNT"
+      else
+        echo ""
+        echo "📋 Package contents (first 30 files):"
+        tar -tzf "$PACKAGE" | head -30
+        
+        # Count files
+        FILE_COUNT=$(tar -tzf "$PACKAGE" | wc -l)
+        echo ""
+        echo "📊 Total files in package: $FILE_COUNT"
+      fi
+      
+      echo ""
+      echo "✅ Package test completed successfully!"
+  artifacts:
+    paths:
+      - helm-charts-*.zip
+      - helm-charts-*.tar.gz
+    expire_in: 7 days
+  only: [merge_requests, main]
+  when: manual
 
 plan:
   stage: plan
