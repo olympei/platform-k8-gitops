@@ -1,5 +1,5 @@
 apiVersion: v2
-name: pod-identity
+name: platform-pod-identity
 version: 1.0.0
 description: AWS Pod Identity for EKS
 dependencies:

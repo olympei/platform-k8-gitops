@@ -1,5 +1,5 @@
 apiVersion: v2
-name: secrets-store-csi-driver
+name: platform-secrets-store-csi-driver
 version: 1.0.0
 description: Kubernetes Secrets Store CSI Driver with AWS Provider
 dependencies:

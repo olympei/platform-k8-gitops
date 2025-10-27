@@ -1,5 +1,5 @@
 apiVersion: v2
-name: external-dns
+name: platform-external-dns
 version: 1.0.0
 description: External DNS for automatic DNS management in AWS Route 53
 dependencies:

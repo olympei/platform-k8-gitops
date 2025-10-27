@@ -200,9 +200,17 @@ plan:
 
       for release in "${RELEASES[@]}"; do
         CHART_DIR="charts/${release}"
-        RELEASE_NAME=$(basename "$release")
-        NS_VAR="HELM_NAMESPACE_$(echo $RELEASE_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
-        NAMESPACE=${!NS_VAR:-$RELEASE_NAME}
+        FOLDER_NAME=$(basename "$release")
+        
+        # Extract actual chart name from Chart.yaml
+        if [ -f "$CHART_DIR/Chart.yaml" ]; then
+          RELEASE_NAME=$(grep "^name:" "$CHART_DIR/Chart.yaml" | awk '{print $2}' | tr -d '"')
+        else
+          RELEASE_NAME="$FOLDER_NAME"
+        fi
+        
+        NS_VAR="HELM_NAMESPACE_$(echo $FOLDER_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        NAMESPACE=${!NS_VAR:-$FOLDER_NAME}
         VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}.yaml"
 
         echo "-------------------------------------------------"
@@ -267,12 +275,19 @@ plan:
     - |
       CHART_NAME="$CHART_TO_DEPLOY"
       CHART_DIR="charts/${CHART_NAME}"
-      RELEASE_NAME="$CHART_NAME"
-      NS_VAR="HELM_NAMESPACE_$(echo $RELEASE_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
-      NAMESPACE=${!NS_VAR:-$RELEASE_NAME}
+      
+      # Extract actual chart name from Chart.yaml
+      if [ -f "$CHART_DIR/Chart.yaml" ]; then
+        RELEASE_NAME=$(grep "^name:" "$CHART_DIR/Chart.yaml" | awk '{print $2}' | tr -d '"')
+      else
+        RELEASE_NAME="$CHART_NAME"
+      fi
+      
+      NS_VAR="HELM_NAMESPACE_$(echo $CHART_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+      NAMESPACE=${!NS_VAR:-$CHART_NAME}
       VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}.yaml"
       
-      echo "🚀 Deploying single chart: $CHART_NAME for $ENVIRONMENT..."
+      echo "🚀 Deploying single chart: $CHART_NAME (release: $RELEASE_NAME) for $ENVIRONMENT..."
       
       if [ ! -d "$CHART_DIR" ]; then
         echo "❌ Chart directory not found: $CHART_DIR"
@@ -488,9 +503,17 @@ deploy:external-dns:prod:
       # Function to uninstall a chart if it exists
       uninstall_chart_if_exists() {
         local chart_name=$1
-        local release_name="$chart_name"
-        local ns_var="HELM_NAMESPACE_$(echo $release_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
-        local namespace=${!ns_var:-$release_name}
+        local chart_dir="charts/${chart_name}"
+        
+        # Extract actual release name from Chart.yaml
+        if [ -f "$chart_dir/Chart.yaml" ]; then
+          local release_name=$(grep "^name:" "$chart_dir/Chart.yaml" | awk '{print $2}' | tr -d '"')
+        else
+          local release_name="$chart_name"
+        fi
+        
+        local ns_var="HELM_NAMESPACE_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local namespace=${!ns_var:-$chart_name}
         
         echo "Checking if $release_name exists in namespace $namespace..."
         
@@ -554,9 +577,17 @@ deploy:external-dns:prod:
   script:
     - |
       CHART_NAME="$CHART_TO_UNINSTALL"
-      RELEASE_NAME="$CHART_NAME"
-      NS_VAR="HELM_NAMESPACE_$(echo $RELEASE_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
-      NAMESPACE=${!NS_VAR:-$RELEASE_NAME}
+      CHART_DIR="charts/${CHART_NAME}"
+      
+      # Extract actual release name from Chart.yaml
+      if [ -f "$CHART_DIR/Chart.yaml" ]; then
+        RELEASE_NAME=$(grep "^name:" "$CHART_DIR/Chart.yaml" | awk '{print $2}' | tr -d '"')
+      else
+        RELEASE_NAME="$CHART_NAME"
+      fi
+      
+      NS_VAR="HELM_NAMESPACE_$(echo $CHART_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+      NAMESPACE=${!NS_VAR:-$CHART_NAME}
       
       echo "🗑️  Uninstalling chart: $CHART_NAME from $ENVIRONMENT..."
       
@@ -793,9 +824,17 @@ verify:prod:
       # Function to check installation status
       check_chart_status() {
         local chart_name=$1
-        local release_name="$chart_name"
-        local ns_var="HELM_NAMESPACE_$(echo $release_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
-        local namespace=${!ns_var:-$release_name}
+        local chart_dir="charts/${chart_name}"
+        
+        # Extract actual release name from Chart.yaml
+        if [ -f "$chart_dir/Chart.yaml" ]; then
+          local release_name=$(grep "^name:" "$chart_dir/Chart.yaml" | awk '{print $2}' | tr -d '"')
+        else
+          local release_name="$chart_name"
+        fi
+        
+        local ns_var="HELM_NAMESPACE_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local namespace=${!ns_var:-$chart_name}
         local install_var="INSTALL_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
         local uninstall_var="UNINSTALL_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
         local install_value=${!install_var}

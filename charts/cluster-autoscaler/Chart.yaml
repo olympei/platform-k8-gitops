@@ -1,5 +1,5 @@
 apiVersion: v2
-name: cluster-autoscaler
+name: platform-cluster-autoscaler
 version: 1.0.0
 description: AWS Cluster Autoscaler for EKS
 dependencies:

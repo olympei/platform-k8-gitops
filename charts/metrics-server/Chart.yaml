@@ -1,5 +1,5 @@
 apiVersion: v2
-name: metrics-server
+name: platform-metrics-server
 version: 1.0.0
 description: Kubernetes Metrics Server for resource usage metrics
 dependencies:
