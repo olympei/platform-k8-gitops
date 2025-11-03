@@ -1,0 +1,4 @@
+apiVersion: v2
+name: platform-aws-load-balancer-controller
+version: 1.0.0
+description: AWS Load Balancer Controller for EKS - Standalone deployment

@@ -1,0 +1,83 @@
+# AWS Load Balancer Controller - Development Environment
+# This controller provisions AWS ALB/NLB for Kubernetes Ingress and Service resources
+
+# Image configuration
+image:
+  repository: public.ecr.aws/eks/aws-load-balancer-controller
+  tag: v2.8.1
+  pullPolicy: IfNotPresent
+
+# Cluster configuration
+clusterName: "my-eks-cluster-dev"  # REQUIRED: Replace with your EKS cluster name
+
+# AWS Region
+region: "us-east-1"  # REQUIRED: Replace with your AWS region
+
+# VPC ID where the cluster is deployed
+vpcId: "vpc-xxxxx"  # REQUIRED: Replace with your VPC ID
+
+# Service Account configuration
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+  annotations:
+    # Pod Identity (EKS 1.24+) - Recommended
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-AWSLoadBalancerController-Role-dev"
+    
+    # OR IRSA (Legacy method) - Uncomment if using IRSA instead of Pod Identity
+    # eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-AWSLoadBalancerController-Role-dev"
+
+# Replica count
+replicaCount: 2
+
+# Resource limits
+resources:
+  limits:
+    cpu: 200m
+    memory: 500Mi
+  requests:
+    cpu: 100m
+    memory: 200Mi
+
+# Enable Shield, WAF, and other AWS features
+enableShield: false
+enableWaf: false
+enableWafv2: false
+
+# Logging
+logLevel: info
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - aws-load-balancer-controller
+          topologyKey: kubernetes.io/hostname
+
+# Default tags for AWS resources
+defaultTags:
+  Environment: dev
+  ManagedBy: eks-load-balancer-controller
+  Team: platform
+
+# Ingress class configuration
+ingressClass: alb
+
+# Additional configuration
+enableBackendSecurityGroup: true
+
+# Install CRDs
+installCRDs: true

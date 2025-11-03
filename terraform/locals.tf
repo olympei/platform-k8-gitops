@@ -64,6 +64,13 @@ locals {
       policy_name     = "EKS-ExternalDNS-Policy"
       role_name       = "EKS-ExternalDNS-Role"
     }
+    aws-load-balancer-controller = {
+      addon_name      = "aws-load-balancer-controller"
+      namespace       = "kube-system"
+      service_account = "aws-load-balancer-controller"
+      policy_name     = "EKS-AWSLoadBalancerController-Policy"
+      role_name       = "EKS-AWSLoadBalancerController-Role"
+    }
   }
 
   # Unique policies (some service accounts share the same policy)
@@ -108,6 +115,11 @@ locals {
       description = "Policy for External DNS"
       policy_file = "external-dns-policy.json"
     }
+    "EKS-AWSLoadBalancerController-Policy" = {
+      name        = "EKS-AWSLoadBalancerController-Policy"
+      description = "Policy for AWS Load Balancer Controller"
+      policy_file = "aws-load-balancer-controller-policy.json"
+    }
   }
 
   # Unique roles (some service accounts share the same role)
@@ -151,6 +163,11 @@ locals {
       name         = "EKS-ExternalDNS-Role"
       description  = "Role for External DNS"
       policy_names = ["EKS-ExternalDNS-Policy"]
+    }
+    "EKS-AWSLoadBalancerController-Role" = {
+      name         = "EKS-AWSLoadBalancerController-Role"
+      description  = "Role for AWS Load Balancer Controller"
+      policy_names = ["EKS-AWSLoadBalancerController-Policy"]
     }
   }
 
