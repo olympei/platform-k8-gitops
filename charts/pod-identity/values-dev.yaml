@@ -31,7 +31,7 @@ serviceAccount:
   name: eks-pod-identity-agent
   annotations:
     # IRSA annotation (used when authMethod is "irsa")
-    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-PodIdentity-Role-irsa-dev"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-PodIdentity-Role-dev"
     # Pod Identity annotation (used when authMethod is "pod-identity")
     eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-PodIdentity-Role-dev"
 

@@ -54,3 +54,50 @@ data "aws_iam_policy_document" "pod_identity_trust_policy" {
     ]
   }
 }
+
+# Combined trust policy for both IRSA and Pod Identity
+# This allows a single role to work with both authentication methods
+data "aws_iam_policy_document" "combined_trust_policy" {
+  for_each = local.service_accounts
+
+  # Pod Identity trust policy
+  statement {
+    sid    = "PodIdentityAssumeRole"
+    effect = "Allow"
+    
+    principals {
+      type        = "Service"
+      identifiers = ["pods.eks.amazonaws.com"]
+    }
+    
+    actions = [
+      "sts:AssumeRole",
+      "sts:TagSession"
+    ]
+  }
+
+  # IRSA trust policy
+  statement {
+    sid    = "IRSAAssumeRole"
+    effect = "Allow"
+    
+    principals {
+      type        = "Federated"
+      identifiers = [var.oidc_provider_arn]
+    }
+    
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(var.oidc_provider_url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:${each.value.namespace}:${each.value.service_account}"]
+    }
+    
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(var.oidc_provider_url, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}

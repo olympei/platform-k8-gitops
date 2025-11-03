@@ -1,37 +1,39 @@
 # Values Files Update Summary
 
-All Helm chart values files have been updated with BOTH annotations to support both Pod Identity and IRSA authentication methods simultaneously.
+All Helm chart values files have been updated with BOTH annotations pointing to a **unified IAM role** that supports both Pod Identity and IRSA authentication methods.
 
-## Role Naming Pattern
+## Unified Role Naming Pattern
 
-### Pod Identity Roles
+All services use a single role:
 ```
 EKS-<ServiceName>-Role-<environment>
 ```
 
-### IRSA Roles
-```
-EKS-<ServiceName>-Role-irsa-<environment>
-```
+Examples:
+- `EKS-ExternalDNS-Role-dev`
+- `EKS-ExternalDNS-Role-prod`
+- `EKS-EFS-CSI-DriverRole-dev`
+
+**Note**: There is NO `-irsa-` suffix. The same role works for both authentication methods.
 
 ## Annotation Format
 
-All serviceAccount annotations now include BOTH annotations with the correct role names:
+All serviceAccount annotations now include BOTH annotations pointing to the **SAME role**:
 
 ```yaml
 serviceAccount:
   annotations:
     # IRSA annotation (used when authMethod is "irsa")
-    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ServiceName-Role-irsa-env"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ServiceName-Role-env"
     # Pod Identity annotation (used when authMethod is "pod-identity")
     eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ServiceName-Role-env"
 ```
 
 **Key Points:**
-- `eks.amazonaws.com/role-arn` uses the IRSA role (with `-irsa-` suffix)
-- `eks.amazonaws.com/pod-identity-association-role-arn` uses the Pod Identity role (without `-irsa-`)
-- Both annotations are present in all values files
-- The authentication method determines which annotation is used by Kubernetes
+- Both annotations point to the **same role ARN**
+- The role has a combined trust policy supporting both IRSA and Pod Identity
+- Kubernetes automatically uses the appropriate annotation based on your cluster configuration
+- No need to change values files when switching authentication methods
 
 ### List of Updated Files
 
@@ -80,7 +82,7 @@ serviceAccount:
    - If using **Pod Identity**: Kubernetes uses `eks.amazonaws.com/pod-identity-association-role-arn`
    - If using **IRSA**: Kubernetes uses `eks.amazonaws.com/role-arn`
 
-3. **No need to modify values files** when switching authentication methods - both annotations are already present with the correct role names
+3. **No need to modify values files** when switching authentication methods - both annotations point to the same role!
 
 ## Example
 
@@ -90,14 +92,16 @@ For External DNS in production, the values file contains:
 serviceAccount:
   annotations:
     # IRSA annotation (used when authMethod is "irsa")
-    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/EKS-ExternalDNS-Role-irsa-prod"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/EKS-ExternalDNS-Role-prod"
     # Pod Identity annotation (used when authMethod is "pod-identity")
     eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::123456789012:role/EKS-ExternalDNS-Role-prod"
 ```
 
 When you deploy:
-- **With Pod Identity enabled**: The pod assumes `EKS-ExternalDNS-Role-prod`
-- **With IRSA enabled**: The pod assumes `EKS-ExternalDNS-Role-irsa-prod`
+- **With Pod Identity enabled**: The pod assumes `EKS-ExternalDNS-Role-prod` via Pod Identity
+- **With IRSA enabled**: The pod assumes `EKS-ExternalDNS-Role-prod` via IRSA
+
+**Same role, different authentication method!**
 
 ## Related Documentation
 

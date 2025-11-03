@@ -17,7 +17,7 @@ metrics-server:
     name: metrics-server
     annotations:
       # IRSA annotation (used when authMethod is "irsa")
-      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-MetricsServer-Role-irsa-dev"
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-MetricsServer-Role-dev"
       # Pod Identity annotation (used when authMethod is "pod-identity")
       eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-MetricsServer-Role-dev"
 
