@@ -7,8 +7,8 @@ controller:
     name: efs-csi-controller-sa
     annotations:
       # IRSA annotation (used when authMethod is "irsa")
-      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-prod"
-      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-irsa-prod"
+      # Pod Identity annotation (used when authMethod is "pod-identity")
       eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-prod"
 
 node:
@@ -17,8 +17,8 @@ node:
     name: efs-csi-node-sa
     annotations:
       # IRSA annotation (used when authMethod is "irsa")
-      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-prod"
-      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-irsa-prod"
+      # Pod Identity annotation (used when authMethod is "pod-identity")
       eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-prod"
 
 image:
@@ -32,4 +32,7 @@ tolerations:
 # Pod Identity specific configuration
 podIdentity:
   enabled: true
+  # Role ARN - Update based on authentication method:
+  # Pod Identity: arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-prod
+  # IRSA:         arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-irsa-prod
   roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-EFS-CSI-DriverRole-prod"

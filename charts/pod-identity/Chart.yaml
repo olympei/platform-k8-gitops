@@ -1,8 +1,16 @@
 apiVersion: v2
-name: platform-pod-identity
-version: 1.0.0
-description: AWS Pod Identity for EKS
-dependencies:
-  - name: eks-pod-identity-agent
-    version: "1.3.2"
-    repository: "https://aws.github.io/eks-charts"
+name: eks-pod-identity-agent
+version: 1.3.2
+description: AWS EKS Pod Identity Agent
+type: application
+appVersion: "v1.3.2"
+home: https://github.com/aws/eks-charts
+sources:
+  - https://github.com/aws/eks-charts
+maintainers:
+  - name: AWS EKS
+keywords:
+  - aws
+  - eks
+  - pod-identity
+  - iam

@@ -1,8 +1,16 @@
 apiVersion: v2
-name: platform-cluster-autoscaler
-version: 1.0.0
-description: AWS Cluster Autoscaler for EKS
-dependencies:
-  - name: cluster-autoscaler
-    version: "9.37.0"
-    repository: "https://kubernetes.github.io/autoscaler"
+name: cluster-autoscaler
+version: 9.52.1
+description: Cluster Autoscaler for Kubernetes
+type: application
+appVersion: "1.31.0"
+home: https://github.com/kubernetes/autoscaler
+sources:
+  - https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler
+maintainers:
+  - name: Kubernetes Autoscaler
+keywords:
+  - cluster
+  - autoscaler
+  - scaling
+  - aws

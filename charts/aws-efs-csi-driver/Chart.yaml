@@ -1,8 +1,16 @@
 apiVersion: v2
-name: platform-efs-csi-driver
-version: 1.0.0
-description: AWS EFS CSI Driver
-dependencies:
-  - name: aws-efs-csi-driver
-    version: "2.5.0"
-    repository: "https://kubernetes-sigs.github.io/aws-efs-csi-driver/"
+name: aws-efs-csi-driver
+version: 3.2.4
+description: AWS EFS CSI Driver for Kubernetes
+type: application
+appVersion: "v2.0.7"
+home: https://github.com/kubernetes-sigs/aws-efs-csi-driver
+sources:
+  - https://github.com/kubernetes-sigs/aws-efs-csi-driver
+maintainers:
+  - name: Kubernetes SIGs
+keywords:
+  - aws
+  - efs
+  - csi
+  - storage

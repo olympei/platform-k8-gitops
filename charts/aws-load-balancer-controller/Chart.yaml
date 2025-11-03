@@ -1,4 +1,17 @@
 apiVersion: v2
-name: platform-aws-load-balancer-controller
-version: 1.0.0
-description: AWS Load Balancer Controller for EKS - Standalone deployment
+name: aws-load-balancer-controller
+version: 1.14.1
+description: AWS Load Balancer Controller for Kubernetes
+type: application
+appVersion: "v2.14.1"
+home: https://github.com/aws/eks-charts
+sources:
+  - https://github.com/aws/eks-charts
+maintainers:
+  - name: AWS EKS
+keywords:
+  - aws
+  - alb
+  - nlb
+  - load-balancer
+  - ingress

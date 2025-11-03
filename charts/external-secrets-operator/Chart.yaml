@@ -1,8 +1,16 @@
 apiVersion: v2
-name: platform-external-secrets-operator
-version: 1.0.0
+name: external-secrets
+version: 0.20.4
 description: External Secrets Operator
-dependencies:
-  - name: external-secrets
-    version: "0.9.11"
-    repository: "https://charts.external-secrets.io"
+type: application
+appVersion: "v0.20.4"
+home: https://external-secrets.io
+sources:
+  - https://github.com/external-secrets/external-secrets
+maintainers:
+  - name: External Secrets
+keywords:
+  - external-secrets
+  - secrets
+  - aws
+  - secrets-manager

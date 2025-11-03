@@ -31,7 +31,56 @@ variable "environment" {
 }
 
 variable "enable_pod_identity" {
-  description = "Enable Pod Identity associations"
+  description = "Enable Pod Identity associations globally"
+  type        = bool
+  default     = true
+}
+
+# Individual Pod Identity toggles for each service
+variable "enable_pod_identity_efs_csi" {
+  description = "Enable Pod Identity for EFS CSI Driver"
+  type        = bool
+  default     = true
+}
+
+variable "enable_pod_identity_external_secrets" {
+  description = "Enable Pod Identity for External Secrets Operator"
+  type        = bool
+  default     = true
+}
+
+variable "enable_pod_identity_ingress_nginx" {
+  description = "Enable Pod Identity for Ingress NGINX"
+  type        = bool
+  default     = true
+}
+
+variable "enable_pod_identity_secrets_store" {
+  description = "Enable Pod Identity for Secrets Store CSI Driver"
+  type        = bool
+  default     = true
+}
+
+variable "enable_pod_identity_cluster_autoscaler" {
+  description = "Enable Pod Identity for Cluster Autoscaler"
+  type        = bool
+  default     = true
+}
+
+variable "enable_pod_identity_metrics_server" {
+  description = "Enable Pod Identity for Metrics Server"
+  type        = bool
+  default     = true
+}
+
+variable "enable_pod_identity_external_dns" {
+  description = "Enable Pod Identity for External DNS"
+  type        = bool
+  default     = true
+}
+
+variable "enable_pod_identity_aws_load_balancer_controller" {
+  description = "Enable Pod Identity for AWS Load Balancer Controller"
   type        = bool
   default     = true
 }

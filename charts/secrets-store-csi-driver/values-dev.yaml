@@ -85,8 +85,8 @@ awsProvider:
     name: secrets-store-csi-driver-provider-aws
     annotations:
       # IRSA annotation (used when authMethod is "irsa")
-      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-dev"
-      # Pod Identity annotations (used when authMethod is "pod-identity")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-irsa-dev"
+      # Pod Identity annotation (used when authMethod is "pod-identity")
       eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-dev"
 
 # Pod Identity specific configuration

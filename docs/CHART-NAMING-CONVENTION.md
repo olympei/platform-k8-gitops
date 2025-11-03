@@ -1,49 +1,42 @@
-# Chart Naming Convention
+# Chart Deployment Pattern
 
 ## Overview
 
-All wrapper charts in this repository use the `platform-` prefix to distinguish them from their upstream dependencies. This follows Helm best practices and prevents naming conflicts.
+All charts in this repository are deployed directly from `.tgz` files without wrapper charts. This simplifies the structure and eliminates dependency management complexity.
 
-## Chart Name Mapping
+## Chart Structure
 
-| Folder Name | Chart Name (in Chart.yaml) | Upstream Dependency |
-|-------------|---------------------------|---------------------|
-| `aws-efs-csi-driver` | `platform-efs-csi-driver` | `aws-efs-csi-driver` |
-| `external-secrets-operator` | `platform-external-secrets-operator` | `external-secrets` |
-| `ingress-nginx` | `platform-ingress-nginx` | `ingress-nginx` |
-| `pod-identity` | `platform-pod-identity` | `eks-pod-identity-agent` |
-| `secrets-store-csi-driver` | `platform-secrets-store-csi-driver` | `secrets-store-csi-driver` |
-| `cluster-autoscaler` | `platform-cluster-autoscaler` | `cluster-autoscaler` |
-| `metrics-server` | `platform-metrics-server` | `metrics-server` |
-| `external-dns` | `platform-external-dns` | `external-dns` |
+| Folder Name | Chart File | Version |
+|-------------|-----------|---------|
+| `aws-efs-csi-driver` | `aws-efs-csi-driver-3.2.4.tgz` | 3.2.4 |
+| `aws-load-balancer-controller` | `aws-load-balancer-controller-1.14.1.tgz` | 1.14.1 |
+| `cluster-autoscaler` | `cluster-autoscaler-9.52.1.tgz` | 9.52.1 |
+| `external-dns` | `external-dns-1.19.0.tgz` | 1.19.0 |
+| `external-secrets-operator` | `external-secrets-0.20.4.tgz` | 0.20.4 |
+| `ingress-nginx` | `ingress-nginx-4.13.3.tgz` | 4.13.3 |
+| `metrics-server` | `metrics-server-3.13.0.tgz` | 3.13.0 |
 
-## Why This Matters
+| `secrets-store-csi-driver` | `secrets-store-csi-driver-1.5.4.tgz` | 1.5.4 |
 
-### Problem with Same Names
-When a wrapper chart has the same name as its dependency:
-```yaml
-# ❌ BAD - Naming conflict
-name: metrics-server
-dependencies:
-  - name: metrics-server
-    repository: "https://..."
+## Deployment Pattern
+
+### Direct Deployment from .tgz
+All charts are deployed directly from packaged .tgz files:
+
+```bash
+helm upgrade --install <release-name> \
+  charts/<chart-dir>/charts/<chart-file>.tgz \
+  -n <namespace> \
+  -f charts/<chart-dir>/values-<env>.yaml
 ```
 
-This causes:
-- Confusion between wrapper and upstream chart
-- Potential Helm resolution conflicts
-- Unclear which chart is being modified
-- Release naming ambiguity
-
-### Solution with Prefix
-Using a prefix clearly distinguishes your wrapper:
-```yaml
-# ✅ GOOD - Clear distinction
-name: platform-metrics-server
-dependencies:
-  - name: metrics-server
-    repository: "https://..."
-```
+### Benefits
+- ✅ No wrapper charts needed
+- ✅ No dependency builds required
+- ✅ Simpler directory structure
+- ✅ Faster deployments
+- ✅ Air-gap friendly
+- ✅ Version locked in repository
 
 ## CI/CD Integration
 

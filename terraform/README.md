@@ -5,6 +5,7 @@ This Terraform configuration creates IAM roles and policies for EKS add-ons with
 ## Features
 
 - **Dual Authentication Support**: Supports both Pod Identity and IRSA
+- **Individual Service Toggles**: Enable/disable Pod Identity per service
 - **Environment Separation**: Separate resources for dev/prod environments
 - **Comprehensive Policies**: Minimal required permissions for each add-on
 - **Pod Identity Associations**: Automatic creation when Pod Identity is enabled
@@ -16,6 +17,43 @@ This Terraform configuration creates IAM roles and policies for EKS add-ons with
 2. **External Secrets Operator**
 3. **Ingress NGINX Controller**
 4. **Pod Identity Agent**
+
+## Pod Identity Configuration
+
+### Global Toggle
+
+Control Pod Identity for all services:
+
+```hcl
+# Enable Pod Identity for all services (default)
+enable_pod_identity = true
+
+# Disable Pod Identity globally (use IRSA for all services)
+enable_pod_identity = false
+```
+
+### Individual Service Toggles
+
+Fine-grained control per service (only applies when `enable_pod_identity = true`):
+
+```hcl
+# Enable Pod Identity globally
+enable_pod_identity = true
+
+# Disable for specific services
+enable_pod_identity_metrics_server = false
+enable_pod_identity_ingress_nginx = false
+```
+
+**Available toggles:**
+- `enable_pod_identity_efs_csi` - EFS CSI Driver
+- `enable_pod_identity_external_secrets` - External Secrets Operator
+- `enable_pod_identity_ingress_nginx` - Ingress NGINX
+- `enable_pod_identity_secrets_store` - Secrets Store CSI Driver
+- `enable_pod_identity_cluster_autoscaler` - Cluster Autoscaler
+- `enable_pod_identity_metrics_server` - Metrics Server
+- `enable_pod_identity_external_dns` - External DNS
+- `enable_pod_identity_aws_load_balancer_controller` - AWS Load Balancer Controller
 
 ## Prerequisites
 

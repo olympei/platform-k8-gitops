@@ -1,8 +1,16 @@
 apiVersion: v2
-name: platform-secrets-store-csi-driver
-version: 1.0.0
-description: Kubernetes Secrets Store CSI Driver with AWS Provider
-dependencies:
-  - name: secrets-store-csi-driver
-    version: "1.4.0"
-    repository: "https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts"
+name: secrets-store-csi-driver
+version: 1.5.4
+description: Secrets Store CSI Driver for Kubernetes
+type: application
+appVersion: "1.5.4"
+home: https://secrets-store-csi-driver.sigs.k8s.io
+sources:
+  - https://github.com/kubernetes-sigs/secrets-store-csi-driver
+maintainers:
+  - name: Kubernetes SIGs
+keywords:
+  - secrets
+  - csi
+  - driver
+  - aws

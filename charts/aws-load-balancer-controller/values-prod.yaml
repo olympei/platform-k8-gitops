@@ -1,60 +1,54 @@
 # AWS Load Balancer Controller - Production Environment
 # This controller provisions AWS ALB/NLB for Kubernetes Ingress and Service resources
 
-# Image configuration
-image:
-  repository: public.ecr.aws/eks/aws-load-balancer-controller
-  tag: v2.8.1
-  pullPolicy: IfNotPresent
-# Cluster configuration
-clusterName: "my-eks-cluster-prod"  # REQUIRED: Replace with your EKS cluster name
-
-# AWS Region
-region: "us-east-1"  # REQUIRED: Replace with your AWS region
-
-# VPC ID where the cluster is deployed
-vpcId: "vpc-xxxxx"  # REQUIRED: Replace with your VPC ID
-
-# Service Account configuration
-serviceAccount:
-  create: true
-  name: aws-load-balancer-controller
-  annotations:
-    # Pod Identity (EKS 1.24+) - Recommended
-    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-AWSLoadBalancerController-Role-prod"
-    
-    # OR IRSA (Legacy method) - Uncomment if using IRSA instead of Pod Identity
-    # eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-AWSLoadBalancerController-Role-prod"
-
-# Replica count - Higher for production
-replicaCount: 3
+aws-load-balancer-controller:
+  # Cluster configuration
+  clusterName: "my-eks-cluster-prod"  # REQUIRED: Replace with your EKS cluster name
   
-# Resource limits - Higher for production
-resources:
-  limits:
-    cpu: 500m
-    memory: 1Gi
-  requests:
-    cpu: 200m
-    memory: 500Mi
-
-# Enable Shield, WAF for production
-enableShield: true
-enableWaf: false
-enableWafv2: true
-
-# Logging
-logLevel: info
-
-# Node selector - Deploy to specific node groups
-nodeSelector: {}
-  # node.kubernetes.io/instance-type: t3.medium
-
-# Tolerations
-tolerations: []
-
-# Affinity rules - Spread across availability zones
-affinity:
+  # AWS Region
+  region: "us-east-1"  # REQUIRED: Replace with your AWS region
+  
+  # VPC ID where the cluster is deployed
+  vpcId: "vpc-xxxxx"  # REQUIRED: Replace with your VPC ID
+  
+  # Service Account configuration
+  serviceAccount:
+    create: true
+    name: aws-load-balancer-controller
+    annotations:
+      # IRSA annotation (used when authMethod is "irsa")
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-AWSLoadBalancerController-Role-irsa-prod"
+      # Pod Identity annotation (used when authMethod is "pod-identity")
+      eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-AWSLoadBalancerController-Role-prod"
+  
+  # Replica count - Higher for production
+  replicaCount: 3
+  
+  # Resource limits - Higher for production
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 500Mi
+  
+  # Enable Shield, WAF for production
+  enableShield: true
+  enableWaf: false
+  enableWafv2: true
+  
+  # Logging
+  logLevel: info
+  
+  # Node selector - Deploy to specific node groups
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity rules - Spread across availability zones
+  affinity:
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         - labelSelector:
@@ -74,23 +68,19 @@ affinity:
                   values:
                     - aws-load-balancer-controller
             topologyKey: kubernetes.io/hostname
-
-
-# Default tags for AWS resources
-defaultTags:
-  Environment: prod
-  ManagedBy: eks-load-balancer-controller
-  Team: platform
-  CostCenter: production
-
-# Ingress class configuration
-ingressClass: alb
-
-# Additional configuration
-enableBackendSecurityGroup: true
-
-# Priority class for production
-priorityClassName: system-cluster-critical
-
-# Install CRDs
-installCRDs: true
+  
+  # Default tags for AWS resources
+  defaultTags:
+    Environment: prod
+    ManagedBy: eks-load-balancer-controller
+    Team: platform
+    CostCenter: production
+  
+  # Ingress class configuration
+  ingressClass: alb
+  
+  # Additional configuration
+  enableBackendSecurityGroup: true
+  
+  # Priority class for production
+  priorityClassName: system-cluster-critical

@@ -353,7 +353,7 @@ plan:
         VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}.yaml"
 
         echo "-------------------------------------------------"
-        echo "Helm Upgrade: $RELEASE_NAME in ns=$NAMESPACE (chart=$CHART_DIR)"
+        echo "Helm Upgrade: $RELEASE_NAME in ns=$NAMESPACE"
         echo "Using values: $VALUES_FILE"
         echo "-------------------------------------------------"
 
@@ -364,41 +364,18 @@ plan:
           continue
         fi
 
-        # Check if chart has dependencies
-        if [ -f "$CHART_DIR/Chart.yaml" ] && grep -q "dependencies:" "$CHART_DIR/Chart.yaml"; then
-          echo "📦 Chart has dependencies, extracting repositories..."
-          
-          # Set environment variable to skip TLS verification for Helm
-          export HELM_REPO_SKIP_TLS_VERIFY=true
-          
-          # Extract unique repository URLs from Chart.yaml
-          REPOS=$(grep -A 10 "dependencies:" "$CHART_DIR/Chart.yaml" | grep "repository:" | awk '{print $2}' | tr -d '"' | sort -u)
-          
-          REPOS_ADDED=0
-          for repo_url in $REPOS; do
-            # Generate a simple repo name from the URL
-            repo_name=$(echo "$repo_url" | sed 's|https://||' | sed 's|http://||' | sed 's|/.*||' | tr '.' '-')
-            echo "  → Adding repository: $repo_name ($repo_url)"
-            helm repo add "$repo_name" "$repo_url" --insecure-skip-tls-verify || true
-            REPOS_ADDED=$((REPOS_ADDED + 1))
-          done
-          
-          # Only update and build if repositories were added
-          if [ $REPOS_ADDED -gt 0 ]; then
-            echo "Updating $REPOS_ADDED repository/repositories..."
-            helm repo update || true
-            
-            echo "Building chart dependencies..."
-            helm dependency build "$CHART_DIR" --skip-refresh || {
-              echo "⚠️  Dependency build failed, trying with update..."
-              helm dependency update "$CHART_DIR" || true
-            }
-          else
-            echo "⚠️  No repositories found in Chart.yaml"
-          fi
+        # Find the .tgz file in charts/ subdirectory
+        TGZ_FILE=$(find "$CHART_DIR/charts" -name "*.tgz" -type f 2>/dev/null | head -1)
+        
+        if [ -z "$TGZ_FILE" ]; then
+          echo "❌ No .tgz file found in $CHART_DIR/charts/"
+          echo "Skipping chart: $RELEASE_NAME"
+          continue
         fi
+        
+        echo "📦 Using chart: $TGZ_FILE"
 
-        helm upgrade --install "$RELEASE_NAME" "$CHART_DIR" \
+        helm upgrade --install "$RELEASE_NAME" "$TGZ_FILE" \
           -n "$NAMESPACE" --create-namespace \
           -f "$VALUES_FILE" \
           --wait --timeout 10m
@@ -442,45 +419,21 @@ plan:
       fi
       
       echo "-------------------------------------------------"
-      echo "Helm Upgrade: $RELEASE_NAME in ns=$NAMESPACE (chart=$CHART_DIR)"
+      echo "Helm Upgrade: $RELEASE_NAME in ns=$NAMESPACE"
       echo "Using values: $VALUES_FILE"
       echo "-------------------------------------------------"
       
-      # Check if chart has dependencies
-      if [ -f "$CHART_DIR/Chart.yaml" ] && grep -q "dependencies:" "$CHART_DIR/Chart.yaml"; then
-        echo "📦 Chart has dependencies, extracting repositories..."
-        
-        # Set environment variable to skip TLS verification for Helm
-        export HELM_REPO_SKIP_TLS_VERIFY=true
-        
-        # Extract unique repository URLs from Chart.yaml
-        REPOS=$(grep -A 10 "dependencies:" "$CHART_DIR/Chart.yaml" | grep "repository:" | awk '{print $2}' | tr -d '"' | sort -u)
-        
-        REPOS_ADDED=0
-        for repo_url in $REPOS; do
-          # Generate a simple repo name from the URL
-          repo_name=$(echo "$repo_url" | sed 's|https://||' | sed 's|http://||' | sed 's|/.*||' | tr '.' '-')
-          echo "  → Adding repository: $repo_name ($repo_url)"
-          helm repo add "$repo_name" "$repo_url" --insecure-skip-tls-verify || true
-          REPOS_ADDED=$((REPOS_ADDED + 1))
-        done
-        
-        # Only update and build if repositories were added
-        if [ $REPOS_ADDED -gt 0 ]; then
-          echo "Updating $REPOS_ADDED repository/repositories..."
-          helm repo update || true
-          
-          echo "Building chart dependencies..."
-          helm dependency build "$CHART_DIR" --skip-refresh || {
-            echo "⚠️  Dependency build failed, trying with update..."
-            helm dependency update "$CHART_DIR" || true
-          }
-        else
-          echo "⚠️  No repositories found in Chart.yaml"
-        fi
+      # Find the .tgz file in charts/ subdirectory
+      TGZ_FILE=$(find "$CHART_DIR/charts" -name "*.tgz" -type f 2>/dev/null | head -1)
+      
+      if [ -z "$TGZ_FILE" ]; then
+        echo "❌ No .tgz file found in $CHART_DIR/charts/"
+        exit 1
       fi
+      
+      echo "📦 Using chart: $TGZ_FILE"
 
-      helm upgrade --install "$RELEASE_NAME" "$CHART_DIR" \
+      helm upgrade --install "$RELEASE_NAME" "$TGZ_FILE" \
         -n "$NAMESPACE" --create-namespace \
         -f "$VALUES_FILE" \
         --wait --timeout 10m

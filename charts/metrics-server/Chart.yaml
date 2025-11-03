@@ -1,8 +1,15 @@
 apiVersion: v2
-name: platform-metrics-server
-version: 1.0.0
-description: Kubernetes Metrics Server for resource usage metrics
-dependencies:
-  - name: metrics-server
-    version: "3.12.1"
-    repository: "https://kubernetes-sigs.github.io/metrics-server/"
+name: metrics-server
+version: 3.13.0
+description: Metrics Server for Kubernetes
+type: application
+appVersion: "0.7.2"
+home: https://github.com/kubernetes-sigs/metrics-server
+sources:
+  - https://github.com/kubernetes-sigs/metrics-server
+maintainers:
+  - name: Kubernetes SIGs
+keywords:
+  - metrics
+  - monitoring
+  - kubernetes
