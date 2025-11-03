@@ -14,3 +14,8 @@ keywords:
   - dns
   - route53
   - aws
+
+dependencies:
+  - name: external-dns
+    version: 1.19.0
+    repository: "file://./charts/external-dns-1.19.0.tgz"

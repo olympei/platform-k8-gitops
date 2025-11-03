@@ -14,3 +14,8 @@ keywords:
   - csi
   - driver
   - aws
+
+dependencies:
+  - name: secrets-store-csi-driver
+    version: 1.5.4
+    repository: "file://./charts/secrets-store-csi-driver-1.5.4.tgz"

@@ -14,3 +14,8 @@ keywords:
   - autoscaler
   - scaling
   - aws
+
+dependencies:
+  - name: cluster-autoscaler
+    version: 9.52.1
+    repository: "file://./charts/cluster-autoscaler-9.52.1.tgz"

@@ -14,3 +14,8 @@ keywords:
   - secrets
   - aws
   - secrets-manager
+
+dependencies:
+  - name: external-secrets
+    version: 0.20.4
+    repository: "file://./charts/external-secrets-0.20.4.tgz"

@@ -15,3 +15,8 @@ keywords:
   - nlb
   - load-balancer
   - ingress
+
+dependencies:
+  - name: aws-load-balancer-controller
+    version: 1.14.1
+    repository: "file://./charts/aws-load-balancer-controller-1.14.1.tgz"

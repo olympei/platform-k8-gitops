@@ -14,3 +14,8 @@ keywords:
   - efs
   - csi
   - storage
+
+dependencies:
+  - name: aws-efs-csi-driver
+    version: 3.2.4
+    repository: "file://./charts/aws-efs-csi-driver-3.2.4.tgz"

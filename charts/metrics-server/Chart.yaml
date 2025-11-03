@@ -13,3 +13,8 @@ keywords:
   - metrics
   - monitoring
   - kubernetes
+
+dependencies:
+  - name: metrics-server
+    version: 3.13.0
+    repository: "file://./charts/metrics-server-3.13.0.tgz"
