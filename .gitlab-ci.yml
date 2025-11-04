@@ -27,6 +27,7 @@
 #   HELM_RELEASES_PROD             - Comma-separated list of charts for prod (optional)
 #   DEV_KUBECONFIG_B64             - Base64 encoded kubeconfig for dev cluster
 #   PROD_KUBECONFIG_B64            - Base64 encoded kubeconfig for prod cluster
+#   HELM_DEBUG                     - Enable Helm debug output (set to "true", "1", or "yes")
 #
 # Namespace Override Variables:
 #   HELM_NAMESPACE_AWS_EFS_CSI_DRIVER     - Override namespace for EFS CSI driver
@@ -288,7 +289,34 @@ plan:
   stage: deploy
   script:
     - |
+      set -e  # Exit on error
+      set -o pipefail  # Catch errors in pipes
+      
       echo "🚀 Deploying Helm add-ons for $ENVIRONMENT..."
+      echo ""
+      
+      # Validate KUBECONFIG
+      if [ -z "$KUBECONFIG_DATA" ]; then
+        echo "❌ ERROR: KUBECONFIG_DATA is not set!"
+        echo "Please ensure DEV_KUBECONFIG_B64 or PROD_KUBECONFIG_B64 is configured in CI/CD variables"
+        exit 1
+      fi
+      
+      # Test kubectl connectivity
+      echo "🔍 Testing cluster connectivity..."
+      if ! kubectl cluster-info >/dev/null 2>&1; then
+        echo "❌ ERROR: Cannot connect to Kubernetes cluster"
+        echo "Cluster info:"
+        kubectl cluster-info || true
+        exit 1
+      fi
+      echo "✅ Successfully connected to cluster"
+      echo ""
+      
+      # Test helm
+      echo "🔍 Checking Helm version..."
+      helm version --short
+      echo ""
       
       # Function to check if chart should be installed
       should_install_chart() {
@@ -336,6 +364,12 @@ plan:
       echo ""
       echo "📋 Charts to install: ${RELEASES[*]}"
       echo ""
+      
+      # Track deployment status
+      DEPLOYED_COUNT=0
+      SKIPPED_COUNT=0
+      FAILED_COUNT=0
+      FAILED_CHARTS=()
 
       for release in "${RELEASES[@]}"; do
         CHART_DIR="charts/${release}"
@@ -352,15 +386,19 @@ plan:
         NAMESPACE=${!NS_VAR:-$FOLDER_NAME}
         VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}.yaml"
 
-        echo "-------------------------------------------------"
-        echo "Helm Upgrade: $RELEASE_NAME in ns=$NAMESPACE"
-        echo "Using values: $VALUES_FILE"
-        echo "-------------------------------------------------"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📦 Processing: $RELEASE_NAME"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Namespace: $NAMESPACE"
+        echo "Values file: $VALUES_FILE"
+        echo ""
 
         # Check if values file exists
         if [ ! -f "$VALUES_FILE" ]; then
           echo "⚠️  Values file not found: $VALUES_FILE"
           echo "Skipping chart: $RELEASE_NAME"
+          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+          echo ""
           continue
         fi
 
@@ -370,20 +408,76 @@ plan:
         if [ -z "$TGZ_FILE" ]; then
           echo "❌ No .tgz file found in $CHART_DIR/charts/"
           echo "Skipping chart: $RELEASE_NAME"
+          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+          echo ""
           continue
         fi
         
         echo "📦 Using chart: $TGZ_FILE"
-
-        helm upgrade --install "$RELEASE_NAME" "$TGZ_FILE" \
+        echo ""
+        
+        # Deploy with error handling
+        echo "🚀 Deploying $RELEASE_NAME..."
+        
+        # Set debug flag if HELM_DEBUG is enabled
+        HELM_DEBUG_FLAG=""
+        if [ "$HELM_DEBUG" = "true" ] || [ "$HELM_DEBUG" = "1" ] || [ "$HELM_DEBUG" = "yes" ]; then
+          HELM_DEBUG_FLAG="--debug"
+          echo "🐛 Debug mode enabled"
+        fi
+        
+        if helm upgrade --install "$RELEASE_NAME" "$TGZ_FILE" \
           -n "$NAMESPACE" --create-namespace \
           -f "$VALUES_FILE" \
-          --wait --timeout 10m
-
-        echo ""
-        kubectl -n "$NAMESPACE" get pods
+          --wait --timeout 10m \
+          $HELM_DEBUG_FLAG; then
+          
+          echo "✅ Successfully deployed $RELEASE_NAME"
+          DEPLOYED_COUNT=$((DEPLOYED_COUNT + 1))
+          
+          echo ""
+          echo "📊 Pod status in namespace $NAMESPACE:"
+          kubectl -n "$NAMESPACE" get pods
+        else
+          echo "❌ Failed to deploy $RELEASE_NAME"
+          FAILED_COUNT=$((FAILED_COUNT + 1))
+          FAILED_CHARTS+=("$RELEASE_NAME")
+          
+          echo ""
+          echo "🔍 Debugging information:"
+          echo "Helm status:"
+          helm status "$RELEASE_NAME" -n "$NAMESPACE" || true
+          echo ""
+          echo "Pod status:"
+          kubectl -n "$NAMESPACE" get pods || true
+          echo ""
+          echo "Recent events:"
+          kubectl -n "$NAMESPACE" get events --sort-by='.lastTimestamp' | tail -20 || true
+        fi
+        
         echo ""
       done
+      
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Deployment Summary"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "✅ Successfully deployed: $DEPLOYED_COUNT charts"
+      echo "⏭️  Skipped: $SKIPPED_COUNT charts"
+      echo "❌ Failed: $FAILED_COUNT charts"
+      
+      if [ $FAILED_COUNT -gt 0 ]; then
+        echo ""
+        echo "Failed charts:"
+        for chart in "${FAILED_CHARTS[@]}"; do
+          echo "  - $chart"
+        done
+        echo ""
+        echo "❌ Deployment completed with errors"
+        exit 1
+      fi
+      
+      echo ""
+      echo "✅ All charts deployed successfully!"
   only: [main]
   when: manual
 
@@ -432,11 +526,21 @@ plan:
       fi
       
       echo "📦 Using chart: $TGZ_FILE"
+      echo ""
+      
+      # Set debug flag if HELM_DEBUG is enabled
+      HELM_DEBUG_FLAG=""
+      if [ "$HELM_DEBUG" = "true" ] || [ "$HELM_DEBUG" = "1" ] || [ "$HELM_DEBUG" = "yes" ]; then
+        HELM_DEBUG_FLAG="--debug"
+        echo "🐛 Debug mode enabled"
+        echo ""
+      fi
 
       helm upgrade --install "$RELEASE_NAME" "$TGZ_FILE" \
         -n "$NAMESPACE" --create-namespace \
         -f "$VALUES_FILE" \
-        --wait --timeout 10m
+        --wait --timeout 10m \
+        $HELM_DEBUG_FLAG
       
       echo ""
       kubectl -n "$NAMESPACE" get pods
