@@ -39,7 +39,7 @@ locals {
     secrets-store-csi-driver = {
       addon_name      = "secrets-store-csi-driver"
       namespace       = "kube-system"
-      service_account = "secrets-store-csi-driver-provider-aws"
+      service_account = "csi-secrets-store-provider-aws"
       policy_name     = "EKS-SecretsStore-Policy"
       role_name       = "EKS-SecretsStore-Role"
     }

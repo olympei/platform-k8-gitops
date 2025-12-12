@@ -44,16 +44,20 @@ secrets-store-csi-driver-provider-aws:
   # RBAC
   rbac:
     install: true
-    serviceAccountName: secrets-store-csi-driver-provider-aws
+    serviceAccountName: csi-secrets-store-provider-aws
   
   # Security context
+  securityContext:
     privileged: false
     allowPrivilegeEscalation: false
   
-  # Pod labels
+  # Pod labels - override default app label
   podLabels:
     app: csi-secrets-store-provider-aws
     environment: prod
+  
+  # Override nameOverride to keep consistent naming
+  nameOverride: csi-secrets-store-provider-aws
   
   # Install the base Secrets Store CSI Driver (set to false if already installed)
   secrets-store-csi-driver:

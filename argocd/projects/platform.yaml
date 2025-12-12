@@ -1,0 +1,43 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Platform infrastructure components
+  
+  # Source repositories
+  sourceRepos:
+    - '*'  # Allow all repos (restrict in production)
+  
+  # Destination clusters and namespaces
+  destinations:
+    - namespace: '*'
+      server: https://kubernetes.default.svc
+  
+  # Cluster resource whitelist
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  
+  # Namespace resource whitelist
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  
+  # Roles for RBAC
+  roles:
+    - name: admin
+      description: Admin privileges for platform project
+      policies:
+        - p, proj:platform:admin, applications, *, platform/*, allow
+      groups:
+        - platform-admins
+    
+    - name: developer
+      description: Developer privileges for platform project
+      policies:
+        - p, proj:platform:developer, applications, get, platform/*, allow
+        - p, proj:platform:developer, applications, sync, platform/*, allow
+      groups:
+        - platform-developers
