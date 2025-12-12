@@ -43,20 +43,49 @@
 #   HELM_NAMESPACE_SECRETS_STORE_CSI_DRIVER_PROVIDER_AWS - Override namespace for AWS Secrets Manager Provider
 #
 # Usage Examples:
-#   Installation:
+#   Helm Charts:
 #     - Deploy all charts: Run deploy:helm:dev or deploy:helm:prod
 #     - Deploy specific chart: Run deploy:efs-csi:dev or deploy:external-secrets:prod
 #     - Skip a chart: Set INSTALL_INGRESS_NGINX=false in CI/CD variables
+#   
+#   Kustomize Resources:
+#     - Deploy all k8s resources: Run deploy:kustomize:dev or deploy:kustomize:prod
+#     - Deploy specific app: Run deploy:k8s:ingress:dev or deploy:k8s:storage:prod
+#     - Deploy multiple apps: Run deploy:k8s:apps:dev with K8S_APPS="ingress,storage"
+#     - Deploy all apps dynamically: Run deploy:k8s:apps:dev (auto-detects apps)
+#     - Available apps: ingress, external-secrets, storage, secrets-store-provider-aws
+#
+# K8S_APPS Variable:
+#   Set K8S_APPS in CI/CD variables to deploy specific apps:
+#     K8S_APPS="ingress,storage"                    - Deploy only ingress and storage
+#     K8S_APPS="secrets-store-provider-aws"         - Deploy only AWS provider
+#     K8S_APPS=""                                   - Auto-detect and deploy all apps
+#   Leave unset to use individual app jobs (deploy:k8s:ingress:dev, etc.)
 #   
 #   Uninstallation:
 #     - Uninstall all marked charts: Run uninstall:helm:dev or uninstall:helm:prod
 #     - Uninstall specific chart: Run uninstall:efs-csi:dev or uninstall:external-secrets:prod
 #     - Mark chart for uninstall: Set UNINSTALL_INGRESS_NGINX=true in CI/CD variables
 #
+# K8s-Resources Structure:
+#   k8s-resources/
+#   ├── environments/          # Deploy all apps for an environment
+#   │   ├── dev/
+#   │   └── prod/
+#   ├── ingress/               # Ingress resources
+#   │   └── overlays/dev|prod/
+#   ├── external-secrets/      # External Secrets resources
+#   │   └── overlays/dev|prod/
+#   ├── storage/               # Storage resources
+#   │   └── overlays/dev|prod/
+#   └── secrets-store-provider-aws/  # AWS Secrets Manager Provider
+#       └── overlays/dev|prod/
+#
 # Safety Notes:
 #   - Uninstall jobs require manual trigger for safety
 #   - Individual chart uninstalls include confirmation prompts
 #   - Charts are uninstalled in reverse order to handle dependencies
+#   - All deployment jobs require manual trigger
 #
 
 stages:
@@ -1086,6 +1115,194 @@ deploy:kustomize:prod:
     ENVIRONMENT: prod
     KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
   needs: ["deploy:helm:prod"]
+
+# Deploy multiple k8s apps dynamically
+deploy:k8s:apps:dev:
+  extends: .deploy_k8s_apps
+  variables:
+    ENVIRONMENT: dev
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+    # K8S_APPS: "ingress,storage,secrets-store-provider-aws"  # Set in CI/CD variables or leave empty for all
+
+deploy:k8s:apps:prod:
+  extends: .deploy_k8s_apps
+  variables:
+    ENVIRONMENT: prod
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+    # K8S_APPS: "ingress,storage,secrets-store-provider-aws"  # Set in CI/CD variables or leave empty for all
+
+# Template for deploying k8s-resources apps dynamically
+# Supports deploying single app or multiple apps via K8S_APPS variable
+.deploy_k8s_apps:
+  stage: deploy
+  script:
+    - |
+      set -e
+      
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "🚀 K8s Apps Deployment for $ENVIRONMENT"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      
+      # Determine which apps to deploy
+      if [ -n "$K8S_APPS" ]; then
+        echo "📋 Apps to deploy (from K8S_APPS): $K8S_APPS"
+        IFS=',' read -ra APPS <<< "$K8S_APPS"
+      elif [ -n "$APP_NAME" ]; then
+        echo "📋 Single app to deploy: $APP_NAME"
+        APPS=("$APP_NAME")
+      else
+        echo "📋 Auto-detecting available apps..."
+        mapfile -t APPS < <(find k8s-resources -mindepth 1 -maxdepth 1 -type d ! -name "environments" -exec basename {} \;)
+        echo "Found apps: ${APPS[*]}"
+      fi
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      
+      # Track deployment status
+      DEPLOYED_COUNT=0
+      SKIPPED_COUNT=0
+      FAILED_COUNT=0
+      FAILED_APPS=()
+      
+      # Deploy each app
+      for app in "${APPS[@]}"; do
+        # Trim whitespace
+        app=$(echo "$app" | xargs)
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📦 Processing: $app"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        APP_PATH="k8s-resources/${app}/overlays/${ENVIRONMENT}"
+        
+        if [ ! -d "$APP_PATH" ]; then
+          echo "⚠️  WARNING: App path not found: $APP_PATH"
+          echo "Skipping $app"
+          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+          continue
+        fi
+        
+        echo "📂 Path: $APP_PATH"
+        echo ""
+        
+        echo "🔍 Previewing resources..."
+        if ! kubectl kustomize "$APP_PATH" > /dev/null 2>&1; then
+          echo "❌ ERROR: Failed to build kustomize for $app"
+          FAILED_COUNT=$((FAILED_COUNT + 1))
+          FAILED_APPS+=("$app")
+          continue
+        fi
+        
+        echo "✅ Kustomize build successful"
+        echo ""
+        
+        echo "🚀 Applying resources..."
+        if kubectl apply -k "$APP_PATH"; then
+          echo "✅ Successfully deployed $app"
+          DEPLOYED_COUNT=$((DEPLOYED_COUNT + 1))
+          
+          # Show resource status
+          NAMESPACE=$(kubectl kustomize "$APP_PATH" | grep "namespace:" | head -1 | awk '{print $2}' || echo "")
+          if [ -n "$NAMESPACE" ]; then
+            echo ""
+            echo "📊 Resources in namespace: $NAMESPACE"
+            kubectl get all -n "$NAMESPACE" 2>/dev/null | head -20 || echo "No resources found"
+          fi
+        else
+          echo "❌ Failed to deploy $app"
+          FAILED_COUNT=$((FAILED_COUNT + 1))
+          FAILED_APPS+=("$app")
+        fi
+      done
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Deployment Summary"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "✅ Successfully deployed: $DEPLOYED_COUNT apps"
+      echo "⏭️  Skipped: $SKIPPED_COUNT apps"
+      echo "❌ Failed: $FAILED_COUNT apps"
+      
+      if [ $FAILED_COUNT -gt 0 ]; then
+        echo ""
+        echo "Failed apps:"
+        for app in "${FAILED_APPS[@]}"; do
+          echo "  - $app"
+        done
+        echo ""
+        echo "❌ Deployment completed with errors"
+        exit 1
+      fi
+      
+      echo ""
+      echo "✅ All apps deployed successfully!"
+  only: [main]
+  when: manual
+
+# Backward compatible template for single app
+.deploy_k8s_app:
+  extends: .deploy_k8s_apps
+
+# Individual app deployment jobs - Dev
+deploy:k8s:ingress:dev:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: ingress
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+deploy:k8s:external-secrets:dev:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: external-secrets
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+deploy:k8s:storage:dev:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: storage
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+deploy:k8s:secrets-store-provider-aws:dev:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: secrets-store-provider-aws
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+# Individual app deployment jobs - Prod
+deploy:k8s:ingress:prod:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: ingress
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+deploy:k8s:external-secrets:prod:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: external-secrets
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+deploy:k8s:storage:prod:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: storage
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+deploy:k8s:secrets-store-provider-aws:prod:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: secrets-store-provider-aws
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
 
 .verify_template:
   stage: verify
