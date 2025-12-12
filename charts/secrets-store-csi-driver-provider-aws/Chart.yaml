@@ -1,0 +1,11 @@
+apiVersion: v2
+name: secrets-store-csi-driver-provider-aws
+description: AWS Secrets Manager and Config Provider for Secret Store CSI Driver
+type: application
+version: 1.0.0
+appVersion: "2.1.0"
+
+dependencies:
+  - name: secrets-store-csi-driver-provider-aws
+    version: 2.1.1
+    repository: "file://charts/secrets-store-csi-driver-provider-aws-2.1.1.tgz"

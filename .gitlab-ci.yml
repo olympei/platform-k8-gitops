@@ -11,6 +11,7 @@
 #   INSTALL_CLUSTER_AUTOSCALER     - Controls cluster-autoscaler chart installation
 #   INSTALL_METRICS_SERVER         - Controls metrics-server chart installation
 #   INSTALL_EXTERNAL_DNS           - Controls external-dns chart installation
+#   INSTALL_SECRETS_STORE_CSI_DRIVER_PROVIDER_AWS - Controls secrets-store-csi-driver-provider-aws chart installation
 #
 # Chart Uninstallation Control Variables (set to "true", "1", or "yes" to enable):
 #   UNINSTALL_AWS_EFS_CSI_DRIVER     - Controls aws-efs-csi-driver chart uninstallation
@@ -21,6 +22,7 @@
 #   UNINSTALL_CLUSTER_AUTOSCALER     - Controls cluster-autoscaler chart uninstallation
 #   UNINSTALL_METRICS_SERVER         - Controls metrics-server chart uninstallation
 #   UNINSTALL_EXTERNAL_DNS           - Controls external-dns chart uninstallation
+#   UNINSTALL_SECRETS_STORE_CSI_DRIVER_PROVIDER_AWS - Controls secrets-store-csi-driver-provider-aws chart uninstallation
 #
 # Environment Variables:
 #   HELM_RELEASES_DEV              - Comma-separated list of charts for dev (optional)
@@ -38,6 +40,7 @@
 #   HELM_NAMESPACE_CLUSTER_AUTOSCALER - Override namespace for Cluster Autoscaler
 #   HELM_NAMESPACE_METRICS_SERVER    - Override namespace for Metrics Server
 #   HELM_NAMESPACE_EXTERNAL_DNS      - Override namespace for External DNS
+#   HELM_NAMESPACE_SECRETS_STORE_CSI_DRIVER_PROVIDER_AWS - Override namespace for AWS Secrets Manager Provider
 #
 # Usage Examples:
 #   Installation:
@@ -68,12 +71,23 @@ stages:
 default:
   image: alpine:3.20
   before_script:
+    - echo "🔧 Setting up environment..."
     - apk add --no-cache bash curl git jq yq kubectl helm
     - mkdir -p ~/.kube
-    - echo "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
-    - export KUBECONFIG=~/.kube/config
-    - helm version
-    - kubectl version --client
+    - |
+      # Only decode kubeconfig if KUBECONFIG_DATA is set
+      if [ -n "$KUBECONFIG_DATA" ]; then
+        echo "📝 Decoding kubeconfig..."
+        echo "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
+        export KUBECONFIG=~/.kube/config
+        echo "✅ Kubeconfig configured"
+      else
+        echo "⚠️  KUBECONFIG_DATA not set in before_script (this is normal for some jobs)"
+      fi
+    - echo "🔍 Checking tool versions..."
+    - helm version --short || echo "⚠️  Helm check skipped"
+    - kubectl version --client || echo "⚠️  Kubectl check skipped"
+    - echo "✅ Environment setup complete"
 
 validate:helm:
   stage: validate
@@ -289,10 +303,18 @@ plan:
   stage: deploy
   script:
     - |
-      set -e  # Exit on error
+      set -x  # Print commands as they execute (debug mode)
       set -o pipefail  # Catch errors in pipes
       
-      echo "🚀 Deploying Helm add-ons for $ENVIRONMENT..."
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "🚀 Starting Helm Deployment for $ENVIRONMENT"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      
+      echo "🔍 Environment Check:"
+      echo "  - ENVIRONMENT: ${ENVIRONMENT:-NOT SET}"
+      echo "  - HELM_RELEASES: ${HELM_RELEASES:-NOT SET}"
+      echo "  - KUBECONFIG_DATA: ${KUBECONFIG_DATA:+SET (hidden)}${KUBECONFIG_DATA:-NOT SET}"
       echo ""
       
       # Validate KUBECONFIG
@@ -302,20 +324,39 @@ plan:
         exit 1
       fi
       
+      echo "✅ KUBECONFIG_DATA is set"
+      echo ""
+      
       # Test kubectl connectivity
       echo "🔍 Testing cluster connectivity..."
-      if ! kubectl cluster-info >/dev/null 2>&1; then
+      echo "Running: kubectl cluster-info"
+      if kubectl cluster-info 2>&1; then
+        echo "✅ Successfully connected to cluster"
+      else
         echo "❌ ERROR: Cannot connect to Kubernetes cluster"
-        echo "Cluster info:"
-        kubectl cluster-info || true
+        echo ""
+        echo "Troubleshooting information:"
+        echo "1. Check if KUBECONFIG is valid:"
+        ls -la ~/.kube/config || echo "  ~/.kube/config not found"
+        echo ""
+        echo "2. KUBECONFIG content (first 5 lines):"
+        head -5 ~/.kube/config 2>/dev/null || echo "  Cannot read kubeconfig"
+        echo ""
+        echo "3. Attempting to get cluster version:"
+        kubectl version --client 2>&1 || echo "  kubectl version failed"
+        echo ""
         exit 1
       fi
-      echo "✅ Successfully connected to cluster"
       echo ""
       
       # Test helm
       echo "🔍 Checking Helm version..."
-      helm version --short
+      if helm version --short 2>&1; then
+        echo "✅ Helm is available"
+      else
+        echo "❌ ERROR: Helm is not available"
+        exit 1
+      fi
       echo ""
       
       # Function to check if chart should be installed
@@ -338,12 +379,36 @@ plan:
       }
       
       # Determine which charts to deploy
+      echo "🔍 Determining charts to deploy..."
       if [ -z "$HELM_RELEASES" ]; then
-        echo "No HELM_RELEASES variable defined. Auto-detecting charts..."
-        mapfile -t ALL_RELEASES < <(find charts -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
+        echo "  No HELM_RELEASES variable defined. Auto-detecting charts..."
+        
+        # Check if charts directory exists
+        if [ ! -d "charts" ]; then
+          echo "❌ ERROR: charts directory not found!"
+          echo "Current directory: $(pwd)"
+          echo "Directory contents:"
+          ls -la
+          exit 1
+        fi
+        
+        # Find all chart directories
+        echo "  Scanning charts directory..."
+        mapfile -t ALL_RELEASES < <(find charts -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>&1)
+        
+        if [ ${#ALL_RELEASES[@]} -eq 0 ]; then
+          echo "❌ ERROR: No charts found in charts directory!"
+          echo "Charts directory contents:"
+          ls -la charts/
+          exit 1
+        fi
+        
+        echo "  Found ${#ALL_RELEASES[@]} charts"
       else
+        echo "  Using HELM_RELEASES: $HELM_RELEASES"
         IFS=',' read -ra ALL_RELEASES <<< "${HELM_RELEASES}"
       fi
+      echo ""
       
       # Filter charts based on installation flags
       RELEASES=()
@@ -478,8 +543,25 @@ plan:
       
       echo ""
       echo "✅ All charts deployed successfully!"
+      exit 0
   only: [main]
   when: manual
+  after_script:
+    - |
+      EXIT_CODE=$?
+      if [ $EXIT_CODE -ne 0 ]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "❌ Job Failed with Exit Code: $EXIT_CODE"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "Troubleshooting Tips:"
+        echo "1. Check the error messages above"
+        echo "2. Enable debug mode by setting HELM_DEBUG=true"
+        echo "3. Verify KUBECONFIG is valid"
+        echo "4. Check cluster connectivity"
+        echo ""
+      fi
 
 # Template for individual chart deployment
 .deploy_single_chart:
@@ -674,6 +756,21 @@ deploy:external-dns:prod:
   variables:
     ENVIRONMENT: prod
     CHART_TO_DEPLOY: external-dns
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+# AWS Secrets Manager Provider deployment jobs
+deploy:secrets-store-provider-aws:dev:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_DEPLOY: secrets-store-csi-driver-provider-aws
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+deploy:secrets-store-provider-aws:prod:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_DEPLOY: secrets-store-csi-driver-provider-aws
     KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
 
 # Template for uninstalling all charts

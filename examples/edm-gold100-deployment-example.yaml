@@ -1,0 +1,204 @@
+# Example Deployment for EDM Gold100 Application
+# This shows how to properly mount secrets from SecretProviderClass
+
+---
+# Service Account with IAM Role
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: edm-gold100-sa
+  namespace: gs
+  annotations:
+    # IMPORTANT: Replace ACCOUNT_ID with your AWS account ID
+    # This IAM role must have permissions to access AWS Secrets Manager
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-dev"
+    # For Pod Identity (if using)
+    eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-dev"
+
+---
+# Deployment that mounts secrets from SecretProviderClass
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edm-gold100
+  namespace: gs
+  labels:
+    app: edm-gold100
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edm-gold100
+  template:
+    metadata:
+      labels:
+        app: edm-gold100
+    spec:
+      # IMPORTANT: Use the service account with IAM role annotation
+      serviceAccountName: edm-gold100-sa
+      
+      containers:
+      - name: app
+        image: your-app-image:latest  # Replace with your actual image
+        
+        # Environment variables can reference the Kubernetes secrets
+        # that are created after the volume is mounted
+        env:
+        - name: DB_OWNER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: edm-gold100-db-owner-secret
+              key: DatabaseOwner_Password
+        
+        - name: APP_USER1_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: edm-gold100-app-user-secret
+              key: ApplicationPassword_user1
+        
+        - name: KEYCLOAK_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: edm-gold100-keycloak-secret
+              key: Keycloak_client_secret
+        
+        # Volume mounts - secrets are available as files
+        volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets"
+          readOnly: true
+        
+        # You can also mount specific secrets as files
+        - name: db-owner-secret
+          mountPath: "/mnt/db-secrets"
+          readOnly: true
+      
+      volumes:
+      # CRITICAL: This volume mount triggers the secret creation
+      # Without this, the Kubernetes secrets won't be created!
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "edm-app-gold100-spc"
+      
+      # After the CSI volume is mounted, you can also mount the created K8s secrets
+      - name: db-owner-secret
+        secret:
+          secretName: edm-gold100-db-owner-secret
+          optional: true  # Set to true during initial deployment
+
+---
+# Test Pod - Use this to verify secrets are working
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-edm-secrets
+  namespace: gs
+  labels:
+    app: test-edm-secrets
+spec:
+  serviceAccountName: edm-gold100-sa
+  
+  containers:
+  - name: test
+    image: busybox:latest
+    command:
+      - sh
+      - -c
+      - |
+        echo "==================================="
+        echo "Testing EDM Gold100 Secrets Mount"
+        echo "==================================="
+        echo ""
+        echo "1. Checking mounted secrets directory..."
+        ls -la /mnt/secrets/ || echo "ERROR: Secrets directory not found!"
+        echo ""
+        echo "2. Listing all mounted secret files..."
+        find /mnt/secrets/ -type f 2>/dev/null || echo "No files found"
+        echo ""
+        echo "3. Checking specific secrets..."
+        if [ -f /mnt/secrets/Certificate_identityKeyStorePassphrase ]; then
+          echo "✅ Certificate_identityKeyStorePassphrase found"
+        else
+          echo "❌ Certificate_identityKeyStorePassphrase NOT found"
+        fi
+        echo ""
+        echo "4. Checking Kubernetes secrets..."
+        echo "Secrets should be created in namespace 'gs'"
+        echo ""
+        echo "5. Checking IAM role..."
+        env | grep AWS || echo "No AWS environment variables"
+        echo ""
+        echo "==================================="
+        echo "Test complete. Pod will sleep for 1 hour."
+        echo "Use 'kubectl exec' to inspect further."
+        echo "==================================="
+        sleep 3600
+    
+    volumeMounts:
+    - name: secrets-store
+      mountPath: "/mnt/secrets"
+      readOnly: true
+  
+  volumes:
+  - name: secrets-store
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: "edm-app-gold100-spc"
+
+---
+# Job to verify secrets are accessible
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: verify-edm-secrets
+  namespace: gs
+spec:
+  template:
+    metadata:
+      labels:
+        app: verify-edm-secrets
+    spec:
+      serviceAccountName: edm-gold100-sa
+      restartPolicy: Never
+      
+      containers:
+      - name: verify
+        image: amazon/aws-cli:latest
+        command:
+          - sh
+          - -c
+          - |
+            echo "Verifying AWS Secrets Manager access..."
+            echo ""
+            echo "1. Checking AWS credentials..."
+            aws sts get-caller-identity || echo "ERROR: Cannot assume IAM role"
+            echo ""
+            echo "2. Listing secrets in Secrets Manager..."
+            aws secretsmanager list-secrets --region us-east-1 --query 'SecretList[?contains(Name, `edm-gold100`)].Name' || echo "ERROR: Cannot list secrets"
+            echo ""
+            echo "3. Testing secret retrieval..."
+            aws secretsmanager get-secret-value \
+              --secret-id edm-gold100-db-owner-secret \
+              --region us-east-1 \
+              --query SecretString \
+              --output text || echo "ERROR: Cannot retrieve secret"
+            echo ""
+            echo "Verification complete!"
+        
+        volumeMounts:
+        - name: secrets-store
+          mountPath: "/mnt/secrets"
+          readOnly: true
+      
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "edm-app-gold100-spc"

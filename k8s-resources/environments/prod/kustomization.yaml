@@ -2,3 +2,10 @@ resources:
   - ../../ingress/overlays/prod
   - ../../external-secrets/overlays/prod
   - ../../storage/overlays/prod
+  - ../../base/secrets-store-csi-driver-provider-aws.yaml
+
+patches:
+  - path: secrets-store-provider-aws-patch.yaml
+    target:
+      kind: ServiceAccount
+      name: secrets-store-csi-driver-provider-aws

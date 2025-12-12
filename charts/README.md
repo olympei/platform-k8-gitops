@@ -20,8 +20,8 @@ Each chart directory contains:
 | external-secrets-operator | 0.20.4 | External Secrets Operator |
 | ingress-nginx | 4.13.3 | NGINX Ingress Controller |
 | metrics-server | 3.13.0 | Metrics Server for resource metrics |
-
 | secrets-store-csi-driver | 1.5.4 | Secrets Store CSI Driver |
+| secrets-store-csi-driver-provider-aws | 2.1.1 | AWS Secrets Manager Provider for CSI Driver |
 
 ## Deployment Pattern
 
@@ -64,8 +64,8 @@ Each chart is sourced from its official Helm repository:
 | external-secrets | external-secrets | https://charts.external-secrets.io | 0.20.4 |
 | ingress-nginx | ingress-nginx | https://kubernetes.github.io/ingress-nginx | 4.13.3 |
 | metrics-server | metrics-server | https://kubernetes-sigs.github.io/metrics-server/ | 3.13.0 |
-
 | secrets-store-csi-driver | secrets-store-csi-driver | https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts | 1.5.4 |
+| secrets-store-csi-driver-provider-aws | aws-secrets-manager | https://aws.github.io/secrets-store-csi-driver-provider-aws | 2.1.1 |
 
 ## Download Charts
 
@@ -81,6 +81,7 @@ helm repo add external-secrets https://charts.external-secrets.io
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
 helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm repo add aws-secrets-manager https://aws.github.io/secrets-store-csi-driver-provider-aws
 helm repo update
 
 # Download specific charts
@@ -91,8 +92,8 @@ helm pull external-dns/external-dns --version 1.19.0
 helm pull external-secrets/external-secrets --version 0.20.4
 helm pull ingress-nginx/ingress-nginx --version 4.13.3
 helm pull metrics-server/metrics-server --version 3.13.0
-
 helm pull secrets-store-csi-driver/secrets-store-csi-driver --version 1.5.4
+helm pull aws-secrets-manager/secrets-store-csi-driver-provider-aws --version 2.1.1
 
 # Move to appropriate directories
 mv aws-efs-csi-driver-3.2.4.tgz charts/aws-efs-csi-driver/charts/
@@ -102,8 +103,8 @@ mv external-dns-1.19.0.tgz charts/external-dns/charts/
 mv external-secrets-0.20.4.tgz charts/external-secrets-operator/charts/
 mv ingress-nginx-4.13.3.tgz charts/ingress-nginx/charts/
 mv metrics-server-3.13.0.tgz charts/metrics-server/charts/
-
 mv secrets-store-csi-driver-1.5.4.tgz charts/secrets-store-csi-driver/charts/
+mv secrets-store-csi-driver-provider-aws-2.1.1.tgz charts/secrets-store-csi-driver-provider-aws/charts/
 
 # Or use the automated download script
 ./scripts/download-all-dependencies.sh

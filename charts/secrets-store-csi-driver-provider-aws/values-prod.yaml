@@ -1,0 +1,59 @@
+# AWS Secrets Manager Provider for Secrets Store CSI Driver - Prod Environment
+# This chart installs the AWS provider that enables the Secrets Store CSI Driver
+# to fetch secrets from AWS Secrets Manager and Systems Manager Parameter Store
+
+secrets-store-csi-driver-provider-aws:
+  # AWS Region for the provider
+  awsRegion: "us-east-1"  # Update with your AWS region
+  
+  # Image configuration
+  image:
+    repository: public.ecr.aws/aws-secrets-manager/secrets-store-csi-driver-provider-aws
+    pullPolicy: IfNotPresent
+    tag: "2.1.0"
+  
+  # Resource limits
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 100m
+      memory: 200Mi
+  
+  # Node selector - deploy on all Linux nodes
+  nodeSelector:
+    kubernetes.io/os: linux
+  
+  # Tolerations to ensure it runs on all nodes
+  tolerations:
+    - operator: Exists
+  
+  # Update strategy
+  updateStrategy:
+    type: RollingUpdate
+  
+  # RBAC
+  rbac:
+    install: true
+  
+  # Security context
+  securityContext:
+    privileged: false
+    allowPrivilegeEscalation: false
+  
+  # Pod labels
+  podLabels:
+    app: csi-secrets-store-provider-aws
+    environment: prod
+  
+  # Pod annotations - IAM role for service account
+  podAnnotations:
+    # IRSA annotation (used when authMethod is "irsa")
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-prod"
+    # Pod Identity annotation (used when authMethod is "pod-identity")
+    eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-SecretsStore-Role-prod"
+  
+  # Install the base Secrets Store CSI Driver (set to false if already installed)
+  secrets-store-csi-driver:
+    install: false  # We already have it installed via separate chart
