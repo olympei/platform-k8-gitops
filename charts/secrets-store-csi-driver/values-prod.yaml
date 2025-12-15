@@ -41,8 +41,8 @@ secrets-store-csi-driver:
     enabled: true
     kubeletRootDir: /var/lib/kubelet
     
-    # Provider volume mount
-    providersDir: /etc/kubernetes/secrets-store-csi-providers
+    # Provider volume mount - MUST match AWS provider socket location
+    providersDir: /var/run/secrets-store-csi-providers
     
     # Node selector for Linux nodes
     nodeSelector:

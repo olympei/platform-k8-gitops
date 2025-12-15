@@ -11,6 +11,7 @@
 #   INSTALL_CLUSTER_AUTOSCALER     - Controls cluster-autoscaler chart installation
 #   INSTALL_METRICS_SERVER         - Controls metrics-server chart installation
 #   INSTALL_EXTERNAL_DNS           - Controls external-dns chart installation
+#   INSTALL_AWS_LOAD_BALANCER_CONTROLLER - Controls aws-load-balancer-controller chart installation
 #   INSTALL_SECRETS_STORE_CSI_DRIVER_PROVIDER_AWS - Controls secrets-store-csi-driver-provider-aws chart installation
 #
 # Chart Uninstallation Control Variables (set to "true", "1", or "yes" to enable):
@@ -22,6 +23,7 @@
 #   UNINSTALL_CLUSTER_AUTOSCALER     - Controls cluster-autoscaler chart uninstallation
 #   UNINSTALL_METRICS_SERVER         - Controls metrics-server chart uninstallation
 #   UNINSTALL_EXTERNAL_DNS           - Controls external-dns chart uninstallation
+#   UNINSTALL_AWS_LOAD_BALANCER_CONTROLLER - Controls aws-load-balancer-controller chart uninstallation
 #   UNINSTALL_SECRETS_STORE_CSI_DRIVER_PROVIDER_AWS - Controls secrets-store-csi-driver-provider-aws chart uninstallation
 #
 # Environment Variables:
@@ -40,6 +42,7 @@
 #   HELM_NAMESPACE_CLUSTER_AUTOSCALER - Override namespace for Cluster Autoscaler
 #   HELM_NAMESPACE_METRICS_SERVER    - Override namespace for Metrics Server
 #   HELM_NAMESPACE_EXTERNAL_DNS      - Override namespace for External DNS
+#   HELM_NAMESPACE_AWS_LOAD_BALANCER_CONTROLLER - Override namespace for AWS Load Balancer Controller
 #   HELM_NAMESPACE_SECRETS_STORE_CSI_DRIVER_PROVIDER_AWS - Override namespace for AWS Secrets Manager Provider
 #
 # Usage Examples:
@@ -730,6 +733,13 @@ deploy:external-dns:dev:
     CHART_TO_DEPLOY: external-dns
     KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
 
+deploy:aws-load-balancer-controller:dev:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_DEPLOY: aws-load-balancer-controller
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
 # Individual chart deployment jobs for prod
 deploy:efs-csi:prod:
   extends: .deploy_single_chart
@@ -785,6 +795,13 @@ deploy:external-dns:prod:
   variables:
     ENVIRONMENT: prod
     CHART_TO_DEPLOY: external-dns
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+deploy:aws-load-balancer-controller:prod:
+  extends: .deploy_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_DEPLOY: aws-load-balancer-controller
     KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
 
 # AWS Secrets Manager Provider deployment jobs
