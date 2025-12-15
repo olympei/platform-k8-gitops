@@ -27,17 +27,8 @@ external-dns:
     roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-prod"
 
   # Provider configuration
-  provider: aws
-
-  # AWS specific configuration
-  aws:
-    region: us-east-1
-    zoneType: public  # public, private, or both
-    assumeRoleArn: ""  # Optional: assume role for cross-account access
-    batchChangeSize: 1000
-    batchChangeInterval: 1s
-    evaluateTargetHealth: true
-    preferCNAME: false
+  provider:
+    name: aws
 
   # Domain filters - restrict to specific domains
   domainFilters:
@@ -60,15 +51,14 @@ external-dns:
 
   # External DNS arguments
   extraArgs:
-    - --log-level=info
-    - --log-format=json
-    - --interval=1m
-    - --min-event-sync-interval=5s
-    - --events
-    - --metrics-address=0.0.0.0:7979
+    - --aws-zone-type=public
+    - --aws-batch-change-size=1000
+    - --aws-batch-change-interval=1s
+    - --aws-evaluate-target-health=true
+    - --aws-prefer-cname=false
+    - --aws-zones-cache-duration=3h
     - --txt-owner-id=external-dns-prod
     - --txt-prefix=external-dns-
-    - --aws-zones-cache-duration=3h
 
   # Resources - higher for production
   resources:
@@ -181,10 +171,11 @@ external-dns:
     failureThreshold: 6
     successThreshold: 1
 
-  # Production-specific monitoring and logging
-  monitoring:
-    enabled: true
-    
-  logging:
-    level: info
-    format: json
+  # Log level
+  logLevel: info
+
+  # Log format
+  logFormat: json
+
+  # Interval for DNS updates
+  interval: 1m

@@ -27,16 +27,8 @@ external-dns:
     roleArn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-dev"
 
   # Provider configuration
-  provider: aws
-
-  # AWS specific configuration
-  aws:
-    region: us-east-1
-    zoneType: private  # public, private, or both
-    assumeRoleArn: ""  # Optional: assume role for cross-account access
-    batchChangeSize: 1000
-    batchChangeInterval: 1s
-    evaluateTargetHealth: true
+  provider:
+    name: aws
 
   # Domain filters - restrict to specific domains
   domainFilters:
@@ -57,12 +49,10 @@ external-dns:
 
   # External DNS arguments
   extraArgs:
-    - --log-level=info
-    - --log-format=text
-    - --interval=1m
-    - --min-event-sync-interval=5s
-    - --events
-    - --metrics-address=0.0.0.0:7979
+    - --aws-zone-type=private
+    - --aws-batch-change-size=1000
+    - --aws-batch-change-interval=1s
+    - --aws-evaluate-target-health=true
     - --txt-owner-id=external-dns-dev
     - --txt-prefix=external-dns-
 
@@ -143,3 +133,12 @@ external-dns:
 
   # Trigger loop on create/update/delete events in addition to regular interval
   triggerLoopOnEvent: false
+
+  # Log level
+  logLevel: info
+
+  # Log format
+  logFormat: text
+
+  # Interval for DNS updates
+  interval: 1m
