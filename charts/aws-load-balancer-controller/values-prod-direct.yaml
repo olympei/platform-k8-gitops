@@ -1,0 +1,86 @@
+# AWS Load Balancer Controller - Production Environment
+# This file is for DIRECT chart deployment (without wrapper)
+# Use this with: helm install aws-load-balancer-controller ./charts/aws-load-balancer-controller-1.14.1.tgz -f values-prod-direct.yaml
+
+# Cluster configuration
+clusterName: "my-eks-cluster-prod"  # REQUIRED: Replace with your EKS cluster name
+
+# AWS Region
+region: "us-east-1"  # REQUIRED: Replace with your AWS region
+
+# VPC ID where the cluster is deployed
+vpcId: "vpc-xxxxx"  # REQUIRED: Replace with your VPC ID
+
+# Service Account configuration
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+  annotations:
+    # IRSA annotation (used when authMethod is "irsa")
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-AWSLoadBalancerController-Role-prod"
+    # Pod Identity annotation (used when authMethod is "pod-identity")
+    eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-AWSLoadBalancerController-Role-prod"
+
+# Replica count - Higher for production
+replicaCount: 3
+
+# Resource limits - Higher for production
+resources:
+  limits:
+    cpu: 500m
+    memory: 1Gi
+  requests:
+    cpu: 200m
+    memory: 500Mi
+
+# Enable Shield, WAF for production
+enableShield: true
+enableWaf: false
+enableWafv2: true
+
+# Logging
+logLevel: info
+
+# Node selector - Deploy to specific node groups
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules - Spread across availability zones
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - aws-load-balancer-controller
+        topologyKey: topology.kubernetes.io/zone
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - aws-load-balancer-controller
+          topologyKey: kubernetes.io/hostname
+
+# Default tags for AWS resources
+defaultTags:
+  Environment: prod
+  ManagedBy: eks-load-balancer-controller
+  Team: platform
+  CostCenter: production
+
+# Ingress class configuration
+ingressClass: alb
+
+# Additional configuration
+enableBackendSecurityGroup: true
+
+# Priority class for production
+priorityClassName: system-cluster-critical

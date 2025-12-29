@@ -1,3 +1,7 @@
+# Chart.yaml for direct deployment (no wrapper)
+# Use this if you want to deploy without the dependency structure
+# Rename this to Chart.yaml to use it
+
 apiVersion: v2
 name: aws-load-balancer-controller
 version: 1.17.0
@@ -15,8 +19,3 @@ keywords:
   - nlb
   - load-balancer
   - ingress
-
-dependencies:
-  - name: aws-load-balancer-controller
-    version: 1.17.0
-    repository: "file://./charts/aws-load-balancer-controller-1.17.0.tgz"

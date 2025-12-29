@@ -1,3 +1,7 @@
+# Chart.yaml with wrapper/dependency structure
+# This is the current configuration used by GitLab CI/CD
+# Use this if you want to deploy with the dependency structure
+
 apiVersion: v2
 name: aws-load-balancer-controller
 version: 1.17.0
