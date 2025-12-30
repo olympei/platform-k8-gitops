@@ -32,6 +32,7 @@
 #   DEV_KUBECONFIG_B64             - Base64 encoded kubeconfig for dev cluster
 #   PROD_KUBECONFIG_B64            - Base64 encoded kubeconfig for prod cluster
 #   HELM_DEBUG                     - Enable Helm debug output (set to "true", "1", or "yes")
+#   USE_DIRECT_VALUES              - Use direct values files without wrapper (set to "true", "1", or "yes")
 #
 # Namespace Override Variables:
 #   HELM_NAMESPACE_AWS_EFS_CSI_DRIVER     - Override namespace for EFS CSI driver
@@ -50,8 +51,7 @@
 #     - Deploy all charts: Run deploy:helm:dev or deploy:helm:prod
 #     - Deploy specific chart: Run deploy:efs-csi:dev or deploy:external-secrets:prod
 #     - Skip a chart: Set INSTALL_INGRESS_NGINX=false in CI/CD variables
-#   
-#   Note: Pipeline uses direct values files (values-{env}-direct.yaml) by default
+#     - Use direct values (no wrapper): Set USE_DIRECT_VALUES=true in CI/CD variables
 #   
 #   Kustomize Resources:
 #     - Deploy all k8s resources: Run deploy:kustomize:dev or deploy:kustomize:prod
@@ -127,7 +127,17 @@ validate:helm:
   stage: validate
   script:
     - |
-      echo "🧩 Linting Helm charts with direct values..."
+      echo "🧩 Linting Helm charts..."
+      echo ""
+      
+      # Check if using direct values
+      if [ "$USE_DIRECT_VALUES" = "true" ] || [ "$USE_DIRECT_VALUES" = "1" ] || [ "$USE_DIRECT_VALUES" = "yes" ]; then
+        echo "ℹ️  USE_DIRECT_VALUES is enabled - will lint .tgz files with direct values"
+        LINT_MODE="direct"
+      else
+        echo "ℹ️  Using wrapper mode - will lint parent charts"
+        LINT_MODE="wrapper"
+      fi
       echo ""
       
       # Function to check if chart should be validated
@@ -167,72 +177,82 @@ validate:helm:
         echo "📦 Linting: $chart_name"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
-        # Find the .tgz file
-        TGZ_FILE=$(find "$chart/charts" -name "*.tgz" -type f 2>/dev/null | head -1)
-        
-        # Determine what to lint
-        if [ -n "$TGZ_FILE" ]; then
-          CHART_TO_LINT="$TGZ_FILE"
-          echo "📦 Chart package: $TGZ_FILE"
+        if [ "$LINT_MODE" = "direct" ]; then
+          # Lint the .tgz file directly with direct values files
+          TGZ_FILE=$(find "$chart/charts" -name "*.tgz" -type f 2>/dev/null | head -1)
+          
+          if [ -z "$TGZ_FILE" ]; then
+            echo "⚠️  No .tgz file found in $chart/charts/"
+            echo "   Falling back to parent chart lint"
+            if ! helm lint "$chart"; then
+              echo "❌ Lint failed for $chart"
+              LINT_ERRORS=$((LINT_ERRORS + 1))
+            else
+              echo "✅ Lint passed for $chart"
+            fi
+          else
+            echo "📦 Chart package: $TGZ_FILE"
+            
+            # Validate with direct values files for each environment
+            CHART_LINT_FAILED=false
+            
+            for env in dev prod; do
+              VALUES_FILE="$chart/values-${env}-direct.yaml"
+              
+              if [ -f "$VALUES_FILE" ]; then
+                echo ""
+                echo "🔍 Validating with: values-${env}-direct.yaml"
+                if helm lint "$TGZ_FILE" -f "$VALUES_FILE"; then
+                  echo "✅ Lint passed with values-${env}-direct.yaml"
+                  VALUES_VALIDATED=$((VALUES_VALIDATED + 1))
+                else
+                  echo "❌ Lint failed with values-${env}-direct.yaml"
+                  CHART_LINT_FAILED=true
+                  LINT_ERRORS=$((LINT_ERRORS + 1))
+                fi
+              else
+                echo ""
+                echo "ℹ️  No values-${env}-direct.yaml found, skipping"
+              fi
+            done
+            
+            # If no direct values files exist, lint without values
+            if [ $VALUES_VALIDATED -eq 0 ]; then
+              echo ""
+              echo "🔍 No direct values files found, linting chart without values"
+              if ! helm lint "$TGZ_FILE"; then
+                echo "❌ Lint failed for $TGZ_FILE"
+                LINT_ERRORS=$((LINT_ERRORS + 1))
+              else
+                echo "✅ Lint passed for $TGZ_FILE"
+              fi
+            fi
+          fi
         else
-          CHART_TO_LINT="$chart"
-          echo "📦 Chart directory: $chart"
-          echo "ℹ️  No .tgz file found, using parent chart"
+          # Lint the parent chart (wrapper mode)
+          if ! helm lint "$chart"; then
+            echo "❌ Lint failed for $chart"
+            LINT_ERRORS=$((LINT_ERRORS + 1))
+          else
+            echo "✅ Lint passed for $chart"
+          fi
         fi
+        
         echo ""
-        
-        # Validate with dev direct values
-        VALUES_DEV="$chart/values-dev-direct.yaml"
-        if [ -f "$VALUES_DEV" ]; then
-          echo "🔍 Validating with: values-dev-direct.yaml"
-          if helm lint "$CHART_TO_LINT" -f "$VALUES_DEV"; then
-            echo "✅ Lint passed with values-dev-direct.yaml"
-            VALUES_VALIDATED=$((VALUES_VALIDATED + 1))
-          else
-            echo "❌ Lint failed with values-dev-direct.yaml"
-            LINT_ERRORS=$((LINT_ERRORS + 1))
-          fi
-          echo ""
-        fi
-        
-        # Validate with prod direct values
-        VALUES_PROD="$chart/values-prod-direct.yaml"
-        if [ -f "$VALUES_PROD" ]; then
-          echo "🔍 Validating with: values-prod-direct.yaml"
-          if helm lint "$CHART_TO_LINT" -f "$VALUES_PROD"; then
-            echo "✅ Lint passed with values-prod-direct.yaml"
-            VALUES_VALIDATED=$((VALUES_VALIDATED + 1))
-          else
-            echo "❌ Lint failed with values-prod-direct.yaml"
-            LINT_ERRORS=$((LINT_ERRORS + 1))
-          fi
-          echo ""
-        fi
-        
-        # If no direct values files exist, skip
-        if [ ! -f "$VALUES_DEV" ] && [ ! -f "$VALUES_PROD" ]; then
-          echo "ℹ️  No direct values files found, skipping"
-          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-          echo ""
-        fi
       done
       
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo "📊 Validation Summary"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      echo "Direct values files validated: $VALUES_VALIDATED"
+      echo "Mode: $LINT_MODE"
+      if [ "$LINT_MODE" = "direct" ]; then
+        echo "Direct values files validated: $VALUES_VALIDATED"
+      fi
       echo "Errors: $LINT_ERRORS"
       echo "Skipped: $SKIPPED_COUNT"
       
       if [ $LINT_ERRORS -gt 0 ]; then
         echo ""
-        echo "❌ $LINT_ERRORS validation(s) failed"
-        exit 1
-      fi
-      
-      echo ""
-      echo "✅ All enabled charts passed linting"
-  only: [merge_requests, main]
         echo "❌ $LINT_ERRORS validation(s) failed"
         exit 1
       fi
@@ -553,8 +573,14 @@ plan:
         NS_VAR="HELM_NAMESPACE_$(echo $FOLDER_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
         NAMESPACE=${!NS_VAR:-$FOLDER_NAME}
         
-        # Use direct values files
-        VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}-direct.yaml"
+        # Determine which values file to use
+        if [ "$USE_DIRECT_VALUES" = "true" ] || [ "$USE_DIRECT_VALUES" = "1" ] || [ "$USE_DIRECT_VALUES" = "yes" ]; then
+          VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}-direct.yaml"
+          echo "Using direct values file (no wrapper)"
+        else
+          VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}.yaml"
+          echo "Using wrapper values file"
+        fi
 
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "📦 Processing: $RELEASE_NAME"
@@ -565,7 +591,7 @@ plan:
 
         # Check if values file exists
         if [ ! -f "$VALUES_FILE" ]; then
-          echo "⚠️  Direct values file not found: $VALUES_FILE"
+          echo "⚠️  Values file not found: $VALUES_FILE"
           echo "Skipping chart: $RELEASE_NAME"
           SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
           echo ""
@@ -575,15 +601,15 @@ plan:
         # Find the .tgz file in charts/ subdirectory
         TGZ_FILE=$(find "$CHART_DIR/charts" -name "*.tgz" -type f 2>/dev/null | head -1)
         
-        # Determine what to deploy
-        if [ -n "$TGZ_FILE" ]; then
-          CHART_TO_DEPLOY="$TGZ_FILE"
-          echo "📦 Using chart package: $TGZ_FILE"
-        else
-          CHART_TO_DEPLOY="$CHART_DIR"
-          echo "📦 Using chart directory: $CHART_DIR"
-          echo "ℹ️  No .tgz file found, deploying from parent chart"
+        if [ -z "$TGZ_FILE" ]; then
+          echo "❌ No .tgz file found in $CHART_DIR/charts/"
+          echo "Skipping chart: $RELEASE_NAME"
+          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+          echo ""
+          continue
         fi
+        
+        echo "📦 Using chart: $TGZ_FILE"
         echo ""
         
         # Deploy with error handling
@@ -596,7 +622,7 @@ plan:
           echo "🐛 Debug mode enabled"
         fi
         
-        if helm upgrade --install "$RELEASE_NAME" "$CHART_TO_DEPLOY" \
+        if helm upgrade --install "$RELEASE_NAME" "$TGZ_FILE" \
           -n "$NAMESPACE" --create-namespace \
           -f "$VALUES_FILE" \
           --wait --timeout 10m \
@@ -686,8 +712,14 @@ plan:
       NS_VAR="HELM_NAMESPACE_$(echo $CHART_NAME | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
       NAMESPACE=${!NS_VAR:-$CHART_NAME}
       
-      # Use direct values files
-      VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}-direct.yaml"
+      # Determine which values file to use
+      if [ "$USE_DIRECT_VALUES" = "true" ] || [ "$USE_DIRECT_VALUES" = "1" ] || [ "$USE_DIRECT_VALUES" = "yes" ]; then
+        VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}-direct.yaml"
+        echo "Using direct values file (no wrapper)"
+      else
+        VALUES_FILE="$CHART_DIR/values-${ENVIRONMENT}.yaml"
+        echo "Using wrapper values file"
+      fi
       
       echo "🚀 Deploying single chart: $CHART_NAME (release: $RELEASE_NAME) for $ENVIRONMENT..."
       
@@ -697,7 +729,7 @@ plan:
       fi
       
       if [ ! -f "$VALUES_FILE" ]; then
-        echo "❌ Direct values file not found: $VALUES_FILE"
+        echo "❌ Values file not found: $VALUES_FILE"
         exit 1
       fi
       
@@ -709,15 +741,12 @@ plan:
       # Find the .tgz file in charts/ subdirectory
       TGZ_FILE=$(find "$CHART_DIR/charts" -name "*.tgz" -type f 2>/dev/null | head -1)
       
-      # Determine what to deploy
-      if [ -n "$TGZ_FILE" ]; then
-        CHART_TO_DEPLOY="$TGZ_FILE"
-        echo "📦 Using chart package: $TGZ_FILE"
-      else
-        CHART_TO_DEPLOY="$CHART_DIR"
-        echo "📦 Using chart directory: $CHART_DIR"
-        echo "ℹ️  No .tgz file found, deploying from parent chart"
+      if [ -z "$TGZ_FILE" ]; then
+        echo "❌ No .tgz file found in $CHART_DIR/charts/"
+        exit 1
       fi
+      
+      echo "📦 Using chart: $TGZ_FILE"
       echo ""
       
       # Set debug flag if HELM_DEBUG is enabled
@@ -728,7 +757,7 @@ plan:
         echo ""
       fi
 
-      helm upgrade --install "$RELEASE_NAME" "$CHART_TO_DEPLOY" \
+      helm upgrade --install "$RELEASE_NAME" "$TGZ_FILE" \
         -n "$NAMESPACE" --create-namespace \
         -f "$VALUES_FILE" \
         --wait --timeout 10m \
