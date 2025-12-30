@@ -1,0 +1,128 @@
+# Basic TargetGroupBinding Example
+# This example shows the simplest way to bind a Kubernetes Service to an existing Target Group
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: default
+  labels:
+    app: my-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-service
+  namespace: default
+  labels:
+    app: my-app
+spec:
+  type: ClusterIP  # TargetGroupBinding works with ClusterIP
+  selector:
+    app: my-app
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+
+---
+# TargetGroupBinding
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: my-app-tgb
+  namespace: default
+  labels:
+    app: my-app
+spec:
+  # Reference to the Kubernetes Service
+  serviceRef:
+    name: my-app-service
+    port: 80  # Must match service port
+  
+  # ARN of the existing Target Group
+  # Replace with your actual Target Group ARN
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/my-k8s-app-tg/TARGET_GROUP_ID
+  
+  # Target type must match the Target Group configuration
+  # Options: ip, instance
+  targetType: ip
+  
+  # Optional: Specify which node port to use (for NodePort services)
+  # nodeSelector:
+  #   matchLabels:
+  #     node-type: application
+
+---
+# Example: Create Target Group with AWS CLI
+# Run this before applying the TargetGroupBinding
+#
+# aws elbv2 create-target-group \
+#   --name my-k8s-app-tg \
+#   --protocol HTTP \
+#   --port 80 \
+#   --vpc-id vpc-xxxxx \
+#   --target-type ip \
+#   --health-check-enabled \
+#   --health-check-path / \
+#   --health-check-interval-seconds 30 \
+#   --health-check-timeout-seconds 5 \
+#   --healthy-threshold-count 2 \
+#   --unhealthy-threshold-count 3 \
+#   --matcher HttpCode=200-299
+
+---
+# Verification Steps:
+#
+# 1. Apply this manifest:
+#    kubectl apply -f 01-basic-targetgroupbinding.yaml
+#
+# 2. Check TargetGroupBinding status:
+#    kubectl get targetgroupbinding my-app-tgb
+#    kubectl describe targetgroupbinding my-app-tgb
+#
+# 3. Verify targets registered in AWS:
+#    TG_ARN="arn:aws:elasticloadbalancing:..."
+#    aws elbv2 describe-target-health --target-group-arn $TG_ARN
+#
+# 4. Check target health:
+#    aws elbv2 describe-target-health --target-group-arn $TG_ARN \
+#      --query 'TargetHealthDescriptions[*].[Target.Id,TargetHealth.State]' \
+#      --output table
+#
+# 5. Test connectivity (if ALB is configured):
+#    curl http://<alb-dns-name>
+

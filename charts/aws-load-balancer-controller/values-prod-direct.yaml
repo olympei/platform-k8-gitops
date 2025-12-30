@@ -84,3 +84,62 @@ enableBackendSecurityGroup: true
 
 # Priority class for production
 priorityClassName: system-cluster-critical
+
+# Default SSL/TLS certificate for ALBs
+# This certificate will be used by default for HTTPS listeners
+# You can override this per-Ingress using annotations
+defaultSSLCertificate:
+  # ARN of the default SSL certificate in ACM (AWS Certificate Manager)
+  # Replace with your ACM certificate ARN
+  arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+  
+# SSL Policy for ALBs
+# Use a more secure policy for production
+# Options: ELBSecurityPolicy-2016-08, ELBSecurityPolicy-TLS-1-2-2017-01, 
+#          ELBSecurityPolicy-TLS-1-2-Ext-2018-06, ELBSecurityPolicy-FS-1-2-Res-2019-08,
+#          ELBSecurityPolicy-TLS-1-3-2021-06 (recommended for production)
+sslPolicy: "ELBSecurityPolicy-TLS-1-2-Ext-2018-06"
+
+# Webhook TLS configuration
+# The controller uses a webhook for validating and mutating resources
+# TLS certificates can be provided via an existing secret
+webhookTLS:
+  # Use an existing Kubernetes secret for TLS certificates
+  # If not specified, certificates will be auto-generated
+  existingSecret: "aws-load-balancer-webhook-tls"
+  
+  # Use cert-manager to manage webhook certificates (recommended for production)
+  # If false and no existingSecret, self-signed certificates will be generated
+  useCertManager: false
+  
+  # Certificate duration (only applies when auto-generating)
+  # Default: 365 days
+  certDuration: 8760h  # 1 year
+  
+  # Certificate renewal before expiration (only applies when auto-generating)
+  # Default: 30 days before expiration
+  certRenewalBefore: 720h  # 30 days
+
+# Webhook service configuration
+webhookService:
+  type: ClusterIP
+  port: 9443
+  targetPort: 9443
+
+# Webhook configuration
+webhook:
+  # Webhook port
+  port: 9443
+  
+  # Webhook timeout
+  timeoutSeconds: 10
+  
+  # Failure policy (Fail or Ignore)
+  # Use Fail for production to prevent invalid resources
+  failurePolicy: Fail
+  
+  # Namespace selector for webhook
+  namespaceSelector: {}
+  
+  # Object selector for webhook
+  objectSelector: {}

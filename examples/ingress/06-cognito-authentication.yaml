@@ -1,0 +1,101 @@
+# Cognito Authentication Example
+# Protect applications with AWS Cognito authentication
+
+---
+# Ingress with Cognito authentication
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: authenticated-app
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+    
+    # Cognito authentication
+    alb.ingress.kubernetes.io/auth-type: cognito
+    alb.ingress.kubernetes.io/auth-idp-cognito: |
+      {
+        "userPoolArn": "arn:aws:cognito-idp:us-east-1:ACCOUNT_ID:userpool/us-east-1_ABC123",
+        "userPoolClientId": "your-client-id",
+        "userPoolDomain": "your-domain.auth.us-east-1.amazoncognito.com"
+      }
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
+    alb.ingress.kubernetes.io/auth-scope: 'openid email profile'
+    alb.ingress.kubernetes.io/auth-session-cookie: AWSELBAuthSessionCookie
+    alb.ingress.kubernetes.io/auth-session-timeout: '3600'
+spec:
+  ingressClassName: alb
+  rules:
+    - host: secure.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: secure-service
+                port:
+                  number: 80
+
+---
+# Public app without authentication on same ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: public-app
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: public.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: public-service
+                port:
+                  number: 80
+
+---
+# Admin app with stricter authentication
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: admin-app
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/target-type: ip
+    
+    # Cognito with admin group requirement
+    alb.ingress.kubernetes.io/auth-type: cognito
+    alb.ingress.kubernetes.io/auth-idp-cognito: |
+      {
+        "userPoolArn": "arn:aws:cognito-idp:us-east-1:ACCOUNT_ID:userpool/us-east-1_ABC123",
+        "userPoolClientId": "admin-client-id",
+        "userPoolDomain": "your-domain.auth.us-east-1.amazoncognito.com"
+      }
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: deny
+    alb.ingress.kubernetes.io/auth-scope: 'openid email groups'
+spec:
+  ingressClassName: alb
+  rules:
+    - host: admin.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-service
+                port:
+                  number: 80

@@ -1,0 +1,98 @@
+# Using Terraform-Managed ALB with Kubernetes Ingress
+# This example shows how to add Ingress rules to an ALB created by Terraform
+
+# IMPORTANT: The AWS Load Balancer Controller must be configured to NOT manage
+# the ALB lifecycle. It will only add/remove listener rules.
+
+---
+# Ingress that uses existing Terraform-managed ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-on-terraform-alb
+  namespace: default
+  annotations:
+    # Use the same group name that Terraform used
+    # This must match the tag: ingress.k8s.aws/stack=<group-name>
+    alb.ingress.kubernetes.io/group.name: terraform-managed-alb
+    
+    # Target type must match the ALB configuration
+    alb.ingress.kubernetes.io/target-type: ip
+    
+    # Priority for this rule (lower = higher priority)
+    alb.ingress.kubernetes.io/group.order: '100'
+    
+    # Health check configuration for this target group
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app-service
+                port:
+                  number: 80
+
+---
+# Add another application to the same Terraform-managed ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-on-terraform-alb
+  namespace: default
+  annotations:
+    # Same group name as Terraform ALB
+    alb.ingress.kubernetes.io/group.name: terraform-managed-alb
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.order: '50'
+    
+    # Different health check for API
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+spec:
+  ingressClassName: alb
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 8080
+
+---
+# Path-based routing on Terraform-managed ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: admin-on-terraform-alb
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: terraform-managed-alb
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.order: '10'  # Higher priority for specific path
+spec:
+  ingressClassName: alb
+  rules:
+    - host: example.com
+      http:
+        paths:
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-service
+                port:
+                  number: 80

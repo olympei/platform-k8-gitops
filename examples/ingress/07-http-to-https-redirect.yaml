@@ -1,0 +1,154 @@
+# HTTP to HTTPS Redirect Examples
+# Different ways to redirect HTTP traffic to HTTPS
+
+---
+# Method 1: Simple SSL redirect annotation
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simple-redirect
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    
+    # Simple redirect - redirects all HTTP to HTTPS
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app-service
+                port:
+                  number: 80
+
+---
+# Method 2: Custom redirect with 301 (permanent)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: permanent-redirect
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+    
+    # Custom redirect action with 301 status
+    alb.ingress.kubernetes.io/actions.ssl-redirect: |
+      {
+        "Type": "redirect",
+        "RedirectConfig": {
+          "Protocol": "HTTPS",
+          "Port": "443",
+          "StatusCode": "HTTP_301"
+        }
+      }
+spec:
+  ingressClassName: alb
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ssl-redirect
+                port:
+                  name: use-annotation
+
+---
+# Method 3: HTTPS only (no HTTP listener)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: https-only
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/target-type: ip
+    
+    # Only HTTPS listener - no HTTP at all
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: secure.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: secure-service
+                port:
+                  number: 80
+
+---
+# Method 4: Conditional redirect (specific paths only)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: conditional-redirect
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+    
+    # Redirect with conditions
+    alb.ingress.kubernetes.io/conditions.secure-redirect: |
+      [
+        {
+          "Field": "path-pattern",
+          "PathPatternConfig": {
+            "Values": ["/secure/*"]
+          }
+        }
+      ]
+    alb.ingress.kubernetes.io/actions.secure-redirect: |
+      {
+        "Type": "redirect",
+        "RedirectConfig": {
+          "Protocol": "HTTPS",
+          "Port": "443",
+          "StatusCode": "HTTP_302"
+        }
+      }
+spec:
+  ingressClassName: alb
+  rules:
+    - host: mixed.example.com
+      http:
+        paths:
+          # This path will be redirected to HTTPS
+          - path: /secure
+            pathType: Prefix
+            backend:
+              service:
+                name: secure-redirect
+                port:
+                  name: use-annotation
+          # This path allows HTTP
+          - path: /public
+            pathType: Prefix
+            backend:
+              service:
+                name: public-service
+                port:
+                  number: 80

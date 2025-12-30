@@ -1,0 +1,165 @@
+# Instance Mode TargetGroupBinding
+# This example uses instance target type instead of IP mode
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: instance-mode-app
+  namespace: default
+  labels:
+    app: instance-mode-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: instance-mode-app
+  template:
+    metadata:
+      labels:
+        app: instance-mode-app
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+---
+# Service with NodePort (required for instance mode)
+apiVersion: v1
+kind: Service
+metadata:
+  name: instance-mode-service
+  namespace: default
+  labels:
+    app: instance-mode-app
+spec:
+  type: NodePort  # Must be NodePort for instance target type
+  selector:
+    app: instance-mode-app
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+      # nodePort: 30080  # Optional: specify node port, or let K8s assign
+
+---
+# TargetGroupBinding with instance target type
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: instance-mode-tgb
+  namespace: default
+  labels:
+    app: instance-mode-app
+spec:
+  serviceRef:
+    name: instance-mode-service
+    port: 80
+  
+  # ARN of target group with instance target type
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/instance-mode-tg/TARGET_GROUP_ID
+  
+  # IMPORTANT: Must be 'instance' to match target group
+  targetType: instance
+  
+  # Optional: Select specific nodes
+  nodeSelector:
+    matchLabels:
+      node.kubernetes.io/instance-type: t3.medium
+      # kubernetes.io/role: worker
+
+---
+# Create Target Group with instance target type:
+#
+# aws elbv2 create-target-group \
+#   --name instance-mode-tg \
+#   --protocol HTTP \
+#   --port 30080 \
+#   --vpc-id vpc-xxxxx \
+#   --target-type instance \
+#   --health-check-enabled \
+#   --health-check-path / \
+#   --health-check-port traffic-port \
+#   --health-check-protocol HTTP
+
+---
+# IP Mode vs Instance Mode Comparison:
+#
+# IP Mode (target-type: ip):
+# ✓ Works with ClusterIP services
+# ✓ Direct pod-to-ALB communication
+# ✓ Better for microservices
+# ✓ Faster scaling (no node port allocation)
+# ✓ More efficient (no extra hop through node)
+# ✗ Requires VPC CNI or compatible networking
+#
+# Instance Mode (target-type: instance):
+# ✓ Works with any CNI plugin
+# ✓ Compatible with legacy setups
+# ✓ Easier troubleshooting (standard node ports)
+# ✗ Requires NodePort service
+# ✗ Extra network hop (node -> pod)
+# ✗ Port allocation overhead
+# ✗ Limited by node port range (30000-32767)
+
+---
+# When to use Instance Mode:
+# 1. Using non-VPC CNI (Calico, Cilium, etc.)
+# 2. Migrating from classic load balancers
+# 3. Need compatibility with existing infrastructure
+# 4. Security policies require node-level routing
+# 5. Troubleshooting IP mode issues
+
+---
+# Security Group Configuration for Instance Mode:
+#
+# The ALB security group must allow traffic to the NodePort range:
+#
+# aws ec2 authorize-security-group-ingress \
+#   --group-id sg-xxxxx \
+#   --protocol tcp \
+#   --port 30000-32767 \
+#   --source-group sg-alb-xxxxx
+#
+# Or for specific node port:
+#
+# aws ec2 authorize-security-group-ingress \
+#   --group-id sg-xxxxx \
+#   --protocol tcp \
+#   --port 30080 \
+#   --source-group sg-alb-xxxxx
+
+---
+# Verification:
+#
+# 1. Check service and node port:
+#    kubectl get svc instance-mode-service
+#    # Note the NodePort assigned
+#
+# 2. Verify TargetGroupBinding:
+#    kubectl describe targetgroupbinding instance-mode-tgb
+#
+# 3. Check registered targets (should be EC2 instances):
+#    aws elbv2 describe-target-health \
+#      --target-group-arn <arn> \
+#      --query 'TargetHealthDescriptions[*].[Target.Id,Target.Port,TargetHealth.State]' \
+#      --output table
+#
+# 4. Test from node:
+#    NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+#    NODE_PORT=$(kubectl get svc instance-mode-service -o jsonpath='{.spec.ports[0].nodePort}')
+#    curl http://$NODE_IP:$NODE_PORT
+

@@ -1,0 +1,162 @@
+# Multi-Port Service with TargetGroupBinding
+# This example shows how to bind multiple ports from a single service to different target groups
+
+---
+# Application with multiple ports (HTTP and metrics)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-port-app
+  namespace: default
+  labels:
+    app: multi-port-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: multi-port-app
+  template:
+    metadata:
+      labels:
+        app: multi-port-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+              protocol: TCP
+            - containerPort: 9090
+              name: metrics
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+# Service exposing multiple ports
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-port-service
+  namespace: default
+  labels:
+    app: multi-port-app
+spec:
+  type: ClusterIP
+  selector:
+    app: multi-port-app
+  ports:
+    # HTTP port
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+    # Metrics port
+    - port: 9090
+      targetPort: 9090
+      protocol: TCP
+      name: metrics
+
+---
+# TargetGroupBinding for HTTP traffic (port 80)
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: multi-port-http-tgb
+  namespace: default
+  labels:
+    app: multi-port-app
+    port: http
+spec:
+  serviceRef:
+    name: multi-port-service
+    port: 80  # Bind to HTTP port
+  
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/app-http-tg/TARGET_GROUP_ID
+  
+  targetType: ip
+
+---
+# TargetGroupBinding for Metrics traffic (port 9090)
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: multi-port-metrics-tgb
+  namespace: default
+  labels:
+    app: multi-port-app
+    port: metrics
+spec:
+  serviceRef:
+    name: multi-port-service
+    port: 9090  # Bind to metrics port
+  
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/app-metrics-tg/TARGET_GROUP_ID
+  
+  targetType: ip
+
+---
+# Create Target Groups with AWS CLI:
+#
+# # HTTP Target Group
+# aws elbv2 create-target-group \
+#   --name app-http-tg \
+#   --protocol HTTP \
+#   --port 80 \
+#   --vpc-id vpc-xxxxx \
+#   --target-type ip \
+#   --health-check-path / \
+#   --health-check-port 80
+#
+# # Metrics Target Group
+# aws elbv2 create-target-group \
+#   --name app-metrics-tg \
+#   --protocol HTTP \
+#   --port 9090 \
+#   --vpc-id vpc-xxxxx \
+#   --target-type ip \
+#   --health-check-path /metrics \
+#   --health-check-port 9090
+
+---
+# Use Case: Different ALBs for different ports
+# - Public ALB for HTTP traffic (port 80)
+# - Internal ALB for metrics (port 9090)
+#
+# This allows:
+# - Public access to application
+# - Private access to metrics (monitoring systems only)
+# - Different security policies per port
+# - Separate scaling and routing rules
+
+---
+# Verification:
+#
+# 1. Check both TargetGroupBindings:
+#    kubectl get targetgroupbinding
+#
+# 2. Verify HTTP targets:
+#    aws elbv2 describe-target-health \
+#      --target-group-arn arn:aws:elasticloadbalancing:...:targetgroup/app-http-tg/...
+#
+# 3. Verify metrics targets:
+#    aws elbv2 describe-target-health \
+#      --target-group-arn arn:aws:elasticloadbalancing:...:targetgroup/app-metrics-tg/...
+#
+# 4. Test HTTP endpoint:
+#    curl http://<alb-dns-name>
+#
+# 5. Test metrics endpoint:
+#    curl http://<internal-alb-dns-name>:9090/metrics
+

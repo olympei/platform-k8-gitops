@@ -1,0 +1,97 @@
+# Basic Shared ALB Example
+# This example shows how to create multiple Ingresses that share a single ALB
+
+---
+# First Ingress - Creates the ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app1-ingress
+  namespace: default
+  annotations:
+    # Group name - all Ingresses with this name share the same ALB
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    
+    # ALB configuration (applies to the entire group)
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    
+    # SSL certificate
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+    
+    # Tags
+    alb.ingress.kubernetes.io/tags: Environment=production,Team=platform
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app1.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app1-service
+                port:
+                  number: 80
+
+---
+# Second Ingress - Uses the existing ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app2-ingress
+  namespace: default
+  annotations:
+    # Same group name - will use the existing ALB
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    
+    # Target type must match the group
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app2.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app2-service
+                port:
+                  number: 80
+
+---
+# Third Ingress - Adds path-based routing to the same ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-ingress
+  namespace: default
+  annotations:
+    # Same group name
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: api-v1-service
+                port:
+                  number: 8080
+          - path: /v2
+            pathType: Prefix
+            backend:
+              service:
+                name: api-v2-service
+                port:
+                  number: 8080

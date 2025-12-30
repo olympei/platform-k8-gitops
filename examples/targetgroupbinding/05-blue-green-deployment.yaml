@@ -1,0 +1,321 @@
+# Blue-Green Deployment with TargetGroupBinding
+# This example shows how to use TargetGroupBinding for blue-green deployments
+
+---
+# Blue Deployment (Current Production)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-blue
+  namespace: default
+  labels:
+    app: myapp
+    version: blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: myapp
+        version: blue
+    spec:
+      containers:
+        - name: app
+          image: myapp:v1.0.0  # Current version
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: VERSION
+              value: "v1.0.0"
+            - name: COLOR
+              value: "blue"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+# Green Deployment (New Version)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-green
+  namespace: default
+  labels:
+    app: myapp
+    version: green
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+      version: green
+  template:
+    metadata:
+      labels:
+        app: myapp
+        version: green
+    spec:
+      containers:
+        - name: app
+          image: myapp:v2.0.0  # New version
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: VERSION
+              value: "v2.0.0"
+            - name: COLOR
+              value: "green"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+# Blue Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-blue-service
+  namespace: default
+  labels:
+    app: myapp
+    version: blue
+spec:
+  type: ClusterIP
+  selector:
+    app: myapp
+    version: blue
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+
+---
+# Green Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-green-service
+  namespace: default
+  labels:
+    app: myapp
+    version: green
+spec:
+  type: ClusterIP
+  selector:
+    app: myapp
+    version: green
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+
+---
+# Production Target Group (initially points to blue)
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: app-production-tgb
+  namespace: default
+  labels:
+    app: myapp
+    environment: production
+spec:
+  serviceRef:
+    name: app-blue-service  # Initially blue
+    port: 80
+  
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/app-production-tg/TARGET_GROUP_ID
+  
+  targetType: ip
+
+---
+# Test/Staging Target Group (for testing green before switching)
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: app-staging-tgb
+  namespace: default
+  labels:
+    app: myapp
+    environment: staging
+spec:
+  serviceRef:
+    name: app-green-service  # Test green version
+    port: 80
+  
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/app-staging-tg/TARGET_GROUP_ID
+  
+  targetType: ip
+
+---
+# Blue-Green Deployment Process:
+#
+# PHASE 1: Initial State (Blue in Production)
+# ==========================================
+# Production TGB -> Blue Service -> Blue Pods (v1.0.0)
+# Staging TGB    -> Green Service -> (no pods yet)
+#
+# kubectl apply -f 05-blue-green-deployment.yaml
+#
+# PHASE 2: Deploy Green (New Version)
+# ====================================
+# Production TGB -> Blue Service -> Blue Pods (v1.0.0)  ← Still serving traffic
+# Staging TGB    -> Green Service -> Green Pods (v2.0.0) ← Testing new version
+#
+# # Test green version via staging ALB
+# curl https://staging.example.com
+#
+# PHASE 3: Switch Traffic to Green
+# =================================
+# Update production TargetGroupBinding to point to green service:
+#
+# kubectl patch targetgroupbinding app-production-tgb \
+#   --type='json' \
+#   -p='[{"op": "replace", "path": "/spec/serviceRef/name", "value":"app-green-service"}]'
+#
+# Production TGB -> Green Service -> Green Pods (v2.0.0)  ← Now serving traffic
+# Staging TGB    -> Green Service -> Green Pods (v2.0.0)
+# Blue Pods still running but not receiving traffic
+#
+# PHASE 4: Verify and Cleanup
+# ============================
+# # Monitor for issues
+# kubectl logs -l version=green --tail=100
+# aws elbv2 describe-target-health --target-group-arn <production-tg-arn>
+#
+# # If successful, scale down blue
+# kubectl scale deployment app-blue --replicas=0
+#
+# # If issues, rollback immediately
+# kubectl patch targetgroupbinding app-production-tgb \
+#   --type='json' \
+#   -p='[{"op": "replace", "path": "/spec/serviceRef/name", "value":"app-blue-service"}]'
+
+---
+# Advanced: Weighted Traffic Splitting
+#
+# For gradual rollout, use AWS CLI to configure weighted target groups:
+#
+# # Create listener rule with weighted target groups
+# aws elbv2 create-rule \
+#   --listener-arn <listener-arn> \
+#   --priority 10 \
+#   --conditions Field=host-header,Values=app.example.com \
+#   --actions Type=forward,ForwardConfig='{
+#     "TargetGroups": [
+#       {
+#         "TargetGroupArn": "<blue-tg-arn>",
+#         "Weight": 90
+#       },
+#       {
+#         "TargetGroupArn": "<green-tg-arn>",
+#         "Weight": 10
+#       }
+#     ]
+#   }'
+#
+# # Gradually shift traffic:
+# # 90% blue, 10% green  -> Test with small traffic
+# # 50% blue, 50% green  -> Canary deployment
+# # 10% blue, 90% green  -> Almost complete
+# # 0% blue, 100% green  -> Full cutover
+
+---
+# Monitoring During Blue-Green Deployment:
+#
+# # Watch pod status
+# watch kubectl get pods -l app=myapp
+#
+# # Monitor target health
+# watch "aws elbv2 describe-target-health \
+#   --target-group-arn <production-tg-arn> \
+#   --query 'TargetHealthDescriptions[*].[Target.Id,TargetHealth.State]' \
+#   --output table"
+#
+# # Check application metrics
+# kubectl top pods -l app=myapp
+#
+# # View logs
+# kubectl logs -l version=green --tail=100 -f
+
+---
+# Rollback Strategy:
+#
+# IMMEDIATE ROLLBACK (within seconds):
+# kubectl patch targetgroupbinding app-production-tgb \
+#   --type='json' \
+#   -p='[{"op": "replace", "path": "/spec/serviceRef/name", "value":"app-blue-service"}]'
+#
+# GRADUAL ROLLBACK (shift traffic back):
+# Use weighted target groups to gradually move traffic back to blue
+
+---
+# Best Practices:
+#
+# 1. Always test green in staging first
+# 2. Keep blue running until green is verified
+# 3. Monitor error rates and latency during switch
+# 4. Have rollback plan ready
+# 5. Use health checks to prevent bad deployments
+# 6. Consider using weighted traffic for gradual rollout
+# 7. Automate the process with CI/CD
+# 8. Set up alerts for deployment issues
+
+---
+# Automation with GitOps:
+#
+# Use ArgoCD or Flux to manage the TargetGroupBinding:
+#
+# apiVersion: argoproj.io/v1alpha1
+# kind: Application
+# metadata:
+#   name: app-production
+# spec:
+#   source:
+#     path: k8s/production
+#     targetRevision: main
+#   syncPolicy:
+#     automated:
+#       prune: false  # Don't auto-delete old version
+#       selfHeal: true
+

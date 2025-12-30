@@ -1,0 +1,406 @@
+# Cross-Cluster TargetGroupBinding
+# This example shows how to share a Target Group across multiple Kubernetes clusters
+
+---
+# CLUSTER 1 Configuration
+# =======================
+
+# Namespace for cluster identification
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    cluster: us-east-1a
+    region: us-east-1
+
+---
+# Application in Cluster 1
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-cluster1
+  namespace: production
+  labels:
+    app: shared-app
+    cluster: cluster1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: shared-app
+      cluster: cluster1
+  template:
+    metadata:
+      labels:
+        app: shared-app
+        cluster: cluster1
+    spec:
+      containers:
+        - name: app
+          image: myapp:latest
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: CLUSTER_NAME
+              value: "cluster1"
+            - name: REGION
+              value: "us-east-1"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+# Service in Cluster 1
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-service
+  namespace: production
+  labels:
+    app: shared-app
+    cluster: cluster1
+spec:
+  type: ClusterIP
+  selector:
+    app: shared-app
+    cluster: cluster1
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+
+---
+# TargetGroupBinding in Cluster 1
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: shared-app-tgb
+  namespace: production
+  labels:
+    app: shared-app
+    cluster: cluster1
+spec:
+  serviceRef:
+    name: app-service
+    port: 80
+  
+  # SAME Target Group ARN used in both clusters
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/shared-app-tg/TARGET_GROUP_ID
+  
+  targetType: ip
+  
+  # Optional: Add cluster identifier in networking
+  networking:
+    ingress:
+      - from:
+          - securityGroup:
+              groupID: sg-xxxxx  # ALB security group
+        ports:
+          - protocol: TCP
+            port: 80
+
+---
+# CLUSTER 2 Configuration
+# =======================
+# Apply this in the second cluster
+
+# Namespace for cluster identification
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    cluster: us-east-1b
+    region: us-east-1
+
+---
+# Application in Cluster 2
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-cluster2
+  namespace: production
+  labels:
+    app: shared-app
+    cluster: cluster2
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: shared-app
+      cluster: cluster2
+  template:
+    metadata:
+      labels:
+        app: shared-app
+        cluster: cluster2
+    spec:
+      containers:
+        - name: app
+          image: myapp:latest
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: CLUSTER_NAME
+              value: "cluster2"
+            - name: REGION
+              value: "us-east-1"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+# Service in Cluster 2
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-service
+  namespace: production
+  labels:
+    app: shared-app
+    cluster: cluster2
+spec:
+  type: ClusterIP
+  selector:
+    app: shared-app
+    cluster: cluster2
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+
+---
+# TargetGroupBinding in Cluster 2
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: shared-app-tgb
+  namespace: production
+  labels:
+    app: shared-app
+    cluster: cluster2
+spec:
+  serviceRef:
+    name: app-service
+    port: 80
+  
+  # SAME Target Group ARN as Cluster 1
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/shared-app-tg/TARGET_GROUP_ID
+  
+  targetType: ip
+  
+  networking:
+    ingress:
+      - from:
+          - securityGroup:
+              groupID: sg-xxxxx  # Same ALB security group
+        ports:
+          - protocol: TCP
+            port: 80
+
+---
+# Prerequisites for Cross-Cluster Setup:
+#
+# 1. Both clusters in same VPC or VPC peering configured
+# 2. Both clusters can reach the same ALB
+# 3. Security groups allow traffic from ALB to both clusters
+# 4. Target Group configured with appropriate health checks
+# 5. AWS Load Balancer Controller installed in both clusters
+# 6. IAM permissions for both controllers to modify same target group
+
+---
+# Create Shared Target Group:
+#
+# aws elbv2 create-target-group \
+#   --name shared-app-tg \
+#   --protocol HTTP \
+#   --port 80 \
+#   --vpc-id vpc-xxxxx \
+#   --target-type ip \
+#   --health-check-enabled \
+#   --health-check-path /health \
+#   --health-check-interval-seconds 30 \
+#   --health-check-timeout-seconds 5 \
+#   --healthy-threshold-count 2 \
+#   --unhealthy-threshold-count 3 \
+#   --tags Key=shared,Value=true Key=clusters,Value=cluster1-cluster2
+
+---
+# Deployment Process:
+#
+# STEP 1: Create Target Group and ALB
+# aws elbv2 create-target-group ...
+# aws elbv2 create-load-balancer ...
+# aws elbv2 create-listener ...
+#
+# STEP 2: Deploy to Cluster 1
+# kubectl --context cluster1 apply -f 06-cross-cluster-targetgroupbinding.yaml
+#
+# STEP 3: Verify Cluster 1 targets
+# aws elbv2 describe-target-health --target-group-arn <arn>
+#
+# STEP 4: Deploy to Cluster 2
+# kubectl --context cluster2 apply -f 06-cross-cluster-targetgroupbinding.yaml
+#
+# STEP 5: Verify both clusters' targets
+# aws elbv2 describe-target-health --target-group-arn <arn> \
+#   --query 'TargetHealthDescriptions[*].[Target.Id,TargetHealth.State,Target.AvailabilityZone]' \
+#   --output table
+
+---
+# Verification:
+#
+# # Check TargetGroupBinding in both clusters
+# kubectl --context cluster1 get targetgroupbinding -n production
+# kubectl --context cluster2 get targetgroupbinding -n production
+#
+# # View all targets (should see pods from both clusters)
+# aws elbv2 describe-target-health \
+#   --target-group-arn <arn> \
+#   --query 'TargetHealthDescriptions[*].[Target.Id,TargetHealth.State]' \
+#   --output table
+#
+# # Test traffic distribution
+# for i in {1..10}; do
+#   curl -s http://<alb-dns-name> | grep CLUSTER_NAME
+# done
+# # Should see responses from both cluster1 and cluster2
+
+---
+# Use Cases:
+#
+# 1. High Availability:
+#    - If one cluster fails, traffic automatically goes to other cluster
+#    - No manual intervention needed
+#    - Automatic failover via health checks
+#
+# 2. Multi-Region Active-Active:
+#    - Clusters in different regions
+#    - Global load balancing
+#    - Reduced latency for users
+#
+# 3. Blue-Green at Cluster Level:
+#    - Cluster 1 = Blue (current version)
+#    - Cluster 2 = Green (new version)
+#    - Test green cluster before full cutover
+#    - Easy rollback by removing cluster 2 from target group
+#
+# 4. Gradual Migration:
+#    - Migrate from old cluster to new cluster
+#    - Both clusters serve traffic during migration
+#    - Decommission old cluster when ready
+#
+# 5. Cost Optimization:
+#    - Use spot instances in one cluster
+#    - Use on-demand in another cluster
+#    - Maintain availability while reducing costs
+
+---
+# Traffic Distribution:
+#
+# ALB distributes traffic across all healthy targets:
+# - 3 pods in Cluster 1
+# - 3 pods in Cluster 2
+# = 6 total targets, each gets ~16.7% of traffic
+#
+# To control distribution, adjust replica counts:
+# - Cluster 1: 4 replicas (66% traffic)
+# - Cluster 2: 2 replicas (33% traffic)
+
+---
+# Monitoring:
+#
+# # Monitor target health across clusters
+# watch "aws elbv2 describe-target-health \
+#   --target-group-arn <arn> \
+#   --query 'TargetHealthDescriptions[*].[Target.Id,TargetHealth.State,Target.AvailabilityZone]' \
+#   --output table"
+#
+# # Check pod distribution
+# kubectl --context cluster1 get pods -n production -l app=shared-app
+# kubectl --context cluster2 get pods -n production -l app=shared-app
+#
+# # View logs from both clusters
+# kubectl --context cluster1 logs -n production -l app=shared-app --tail=50
+# kubectl --context cluster2 logs -n production -l app=shared-app --tail=50
+
+---
+# Disaster Recovery:
+#
+# SCENARIO: Cluster 1 fails completely
+#
+# 1. ALB health checks detect unhealthy targets from Cluster 1
+# 2. ALB automatically stops sending traffic to Cluster 1
+# 3. All traffic goes to Cluster 2
+# 4. Scale up Cluster 2 if needed:
+#    kubectl --context cluster2 scale deployment app-cluster2 --replicas=6
+# 5. Fix Cluster 1
+# 6. Traffic automatically resumes to Cluster 1 when healthy
+
+---
+# Security Considerations:
+#
+# 1. IAM Permissions:
+#    Both controllers need permission to modify the same target group
+#
+# 2. Network Security:
+#    - Security groups must allow ALB -> both clusters
+#    - Consider using security group rules instead of CIDR
+#
+# 3. Cluster Isolation:
+#    - Clusters should not communicate directly
+#    - All traffic goes through ALB
+#
+# 4. Secrets Management:
+#    - Use separate secrets per cluster
+#    - Consider AWS Secrets Manager with cross-region replication
+
+---
+# Best Practices:
+#
+# 1. Use same application version in both clusters initially
+# 2. Test failover regularly
+# 3. Monitor target health continuously
+# 4. Set up alerts for cluster failures
+# 5. Document runbooks for disaster recovery
+# 6. Use Infrastructure as Code (Terraform) for consistency
+# 7. Implement proper health checks
+# 8. Consider using weighted target groups for controlled traffic distribution
+

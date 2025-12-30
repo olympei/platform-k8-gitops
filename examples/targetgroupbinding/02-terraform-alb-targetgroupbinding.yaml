@@ -1,0 +1,192 @@
+# Complete Terraform-Managed ALB with TargetGroupBinding
+# This example shows how to use TargetGroupBinding with infrastructure created by Terraform
+
+---
+# Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: default
+  labels:
+    app: web-app
+    tier: frontend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+        tier: frontend
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+# API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-app
+  namespace: default
+  labels:
+    app: api-app
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-app
+  template:
+    metadata:
+      labels:
+        app: api-app
+        tier: backend
+    spec:
+      containers:
+        - name: api
+          image: hashicorp/http-echo:latest
+          args:
+            - "-text=API Response"
+          ports:
+            - containerPort: 5678
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+---
+# Web Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service
+  namespace: default
+  labels:
+    app: web-app
+spec:
+  type: ClusterIP
+  selector:
+    app: web-app
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+  namespace: default
+  labels:
+    app: api-app
+spec:
+  type: ClusterIP
+  selector:
+    app: api-app
+  ports:
+    - port: 80
+      targetPort: 5678
+      protocol: TCP
+      name: http
+
+---
+# TargetGroupBinding for Web App
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: web-app-tgb
+  namespace: default
+  labels:
+    app: web-app
+spec:
+  serviceRef:
+    name: web-service
+    port: 80
+  
+  # This ARN comes from Terraform output
+  # terraform output web_target_group_arn
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/web-app-tg/TARGET_GROUP_ID
+  
+  targetType: ip
+  
+  # Optional: Configure networking for better security
+  networking:
+    ingress:
+      - from:
+          - securityGroup:
+              groupID: sg-xxxxx  # ALB security group
+        ports:
+          - protocol: TCP
+            port: 80
+
+---
+# TargetGroupBinding for API App
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: api-app-tgb
+  namespace: default
+  labels:
+    app: api-app
+spec:
+  serviceRef:
+    name: api-service
+    port: 80
+  
+  # This ARN comes from Terraform output
+  # terraform output api_target_group_arn
+  targetGroupARN: arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/api-app-tg/TARGET_GROUP_ID
+  
+  targetType: ip
+  
+  networking:
+    ingress:
+      - from:
+          - securityGroup:
+              groupID: sg-xxxxx  # ALB security group
+        ports:
+          - protocol: TCP
+            port: 80
+
+---
+# See terraform-targetgroupbinding.tf for the complete Terraform configuration
+# that creates:
+# - ALB
+# - Target Groups (web-app-tg, api-app-tg)
+# - Listeners with routing rules
+# - Security Groups
+

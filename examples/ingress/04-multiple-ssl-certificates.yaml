@@ -1,0 +1,86 @@
+# Multiple SSL Certificates Example (SNI)
+# Use Server Name Indication to serve multiple certificates on the same ALB
+
+---
+# Ingress with multiple certificates
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: multi-cert-ingress
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    
+    # Multiple certificates separated by commas (SNI support)
+    alb.ingress.kubernetes.io/certificate-arn: |
+      arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT1_ID,
+      arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT2_ID,
+      arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT3_ID
+    
+    # SSL policy
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-TLS-1-2-Ext-2018-06"
+spec:
+  ingressClassName: alb
+  rules:
+    # Domain 1 - uses first certificate
+    - host: app1.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app1-service
+                port:
+                  number: 80
+    
+    # Domain 2 - uses second certificate
+    - host: app2.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app2-service
+                port:
+                  number: 80
+    
+    # Domain 3 - uses third certificate
+    - host: app3.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app3-service
+                port:
+                  number: 80
+
+---
+# Additional Ingress using the same ALB
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: additional-domain-ingress
+  namespace: default
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app4.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app4-service
+                port:
+                  number: 80
