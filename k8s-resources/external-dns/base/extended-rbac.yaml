@@ -1,6 +1,6 @@
 # Extended RBAC for External DNS
-# Apply this file after deploying External DNS with Helm
-# kubectl apply -f charts/external-dns/k8s-resources/extended-rbac.yaml
+# This is the base RBAC configuration
+# Use overlays for environment-specific customizations
 
 ---
 # Extended ClusterRole

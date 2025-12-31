@@ -53,24 +53,32 @@
 #   
 #   Note: Pipeline uses direct values files (values-{env}-direct.yaml) by default
 #   
-#   Kustomize Resources:
+#   Kustomize Resources (Deployment):
 #     - Deploy all k8s resources: Run deploy:kustomize:dev or deploy:kustomize:prod
 #     - Deploy specific app: Run deploy:k8s:ingress:dev or deploy:k8s:storage:prod
 #     - Deploy multiple apps: Run deploy:k8s:apps:dev with K8S_APPS="ingress,storage"
 #     - Deploy all apps dynamically: Run deploy:k8s:apps:dev (auto-detects apps)
-#     - Available apps: ingress, external-secrets, storage, secrets-store-provider-aws
+#     - Available apps: external-dns, ingress, external-secrets, storage, secrets-store-provider-aws
 #
 # K8S_APPS Variable:
-#   Set K8S_APPS in CI/CD variables to deploy specific apps:
-#     K8S_APPS="ingress,storage"                    - Deploy only ingress and storage
-#     K8S_APPS="secrets-store-provider-aws"         - Deploy only AWS provider
-#     K8S_APPS=""                                   - Auto-detect and deploy all apps
+#   Set K8S_APPS in CI/CD variables to deploy/uninstall specific apps:
+#     K8S_APPS="ingress,storage"                    - Deploy/uninstall only ingress and storage
+#     K8S_APPS="secrets-store-provider-aws"         - Deploy/uninstall only AWS provider
+#     K8S_APPS="external-dns"                       - Deploy/uninstall only External DNS
+#     K8S_APPS=""                                   - Auto-detect and deploy/uninstall all apps
 #   Leave unset to use individual app jobs (deploy:k8s:ingress:dev, etc.)
 #   
-#   Uninstallation:
+#   Helm Charts Uninstallation:
 #     - Uninstall all marked charts: Run uninstall:helm:dev or uninstall:helm:prod
 #     - Uninstall specific chart: Run uninstall:efs-csi:dev or uninstall:external-secrets:prod
 #     - Mark chart for uninstall: Set UNINSTALL_INGRESS_NGINX=true in CI/CD variables
+#   
+#   Kustomize Resources (Uninstallation):
+#     - Uninstall all k8s resources: Run uninstall:kustomize:dev or uninstall:kustomize:prod
+#     - Uninstall specific app: Run uninstall:k8s:external-dns:dev or uninstall:k8s:ingress:prod
+#     - Uninstall multiple apps: Run uninstall:k8s:apps:dev with K8S_APPS="external-dns,ingress"
+#     - Uninstall all apps dynamically: Run uninstall:k8s:apps:dev (auto-detects apps)
+#     - Apps are uninstalled in reverse order to handle dependencies
 #
 # K8s-Resources Structure:
 #   k8s-resources/
@@ -1189,6 +1197,284 @@ uninstall:external-dns:prod:
     CHART_TO_UNINSTALL: external-dns
     KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
 
+uninstall:aws-load-balancer-controller:dev:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_UNINSTALL: aws-load-balancer-controller
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:aws-load-balancer-controller:prod:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_UNINSTALL: aws-load-balancer-controller
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+uninstall:secrets-store-provider-aws:dev:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: dev
+    CHART_TO_UNINSTALL: secrets-store-csi-driver-provider-aws
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:secrets-store-provider-aws:prod:
+  extends: .uninstall_single_chart
+  variables:
+    ENVIRONMENT: prod
+    CHART_TO_UNINSTALL: secrets-store-csi-driver-provider-aws
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+# ============================================================================
+# K8S-RESOURCES UNINSTALL JOBS
+# ============================================================================
+
+# Template for uninstalling k8s-resources apps
+.uninstall_k8s_apps:
+  stage: uninstall
+  script:
+    - |
+      set -e
+      
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "🗑️  K8s Apps Uninstall for $ENVIRONMENT"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      
+      # Determine which apps to uninstall
+      if [ -n "$K8S_APPS" ]; then
+        echo "📋 Apps to uninstall (from K8S_APPS): $K8S_APPS"
+        IFS=',' read -ra APPS <<< "$K8S_APPS"
+      elif [ -n "$APP_NAME" ]; then
+        echo "📋 Single app to uninstall: $APP_NAME"
+        APPS=("$APP_NAME")
+      else
+        echo "📋 Auto-detecting available apps..."
+        mapfile -t APPS < <(find k8s-resources -mindepth 1 -maxdepth 1 -type d ! -name "environments" -exec basename {} \;)
+        echo "Found apps: ${APPS[*]}"
+      fi
+      
+      echo ""
+      echo "⚠️  WARNING: This will delete resources from the cluster!"
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      
+      # Track uninstall status
+      UNINSTALLED_COUNT=0
+      SKIPPED_COUNT=0
+      FAILED_COUNT=0
+      FAILED_APPS=()
+      
+      # Uninstall each app (in reverse order for dependencies)
+      for ((i=${#APPS[@]}-1; i>=0; i--)); do
+        app="${APPS[i]}"
+        # Trim whitespace
+        app=$(echo "$app" | xargs)
+        
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🗑️  Processing: $app"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        APP_PATH="k8s-resources/${app}/overlays/${ENVIRONMENT}"
+        
+        if [ ! -d "$APP_PATH" ]; then
+          echo "⚠️  WARNING: App path not found: $APP_PATH"
+          echo "Skipping $app"
+          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+          continue
+        fi
+        
+        echo "📂 Path: $APP_PATH"
+        echo ""
+        
+        # Check if resources exist
+        echo "🔍 Checking for existing resources..."
+        if ! kubectl kustomize "$APP_PATH" > /dev/null 2>&1; then
+          echo "⚠️  WARNING: Failed to build kustomize for $app"
+          echo "Skipping $app"
+          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+          continue
+        fi
+        
+        # Show resources that will be deleted
+        echo "📋 Resources to be deleted:"
+        kubectl kustomize "$APP_PATH" | grep "kind:" | sort | uniq -c || echo "No resources found"
+        echo ""
+        
+        echo "🗑️  Deleting resources..."
+        if kubectl delete -k "$APP_PATH" --ignore-not-found=true --timeout=5m; then
+          echo "✅ Successfully uninstalled $app"
+          UNINSTALLED_COUNT=$((UNINSTALLED_COUNT + 1))
+        else
+          echo "❌ Failed to uninstall $app"
+          FAILED_COUNT=$((FAILED_COUNT + 1))
+          FAILED_APPS+=("$app")
+        fi
+      done
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Uninstall Summary"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "✅ Successfully uninstalled: $UNINSTALLED_COUNT apps"
+      echo "⏭️  Skipped: $SKIPPED_COUNT apps"
+      echo "❌ Failed: $FAILED_COUNT apps"
+      
+      if [ $FAILED_COUNT -gt 0 ]; then
+        echo ""
+        echo "Failed apps:"
+        for app in "${FAILED_APPS[@]}"; do
+          echo "  - $app"
+        done
+        echo ""
+        echo "❌ Uninstall completed with errors"
+        exit 1
+      fi
+      
+      echo ""
+      echo "✅ All apps uninstalled successfully!"
+  only: [main]
+  when: manual
+
+# Uninstall all k8s-resources apps
+uninstall:k8s:apps:dev:
+  extends: .uninstall_k8s_apps
+  variables:
+    ENVIRONMENT: dev
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+    # K8S_APPS: "ingress,storage,secrets-store-provider-aws"  # Set in CI/CD variables or leave empty for all
+
+uninstall:k8s:apps:prod:
+  extends: .uninstall_k8s_apps
+  variables:
+    ENVIRONMENT: prod
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+    # K8S_APPS: "ingress,storage,secrets-store-provider-aws"  # Set in CI/CD variables or leave empty for all
+
+# Backward compatible template for single app uninstall
+.uninstall_k8s_app:
+  extends: .uninstall_k8s_apps
+
+# Individual k8s-resources app uninstall jobs - Dev
+uninstall:k8s:external-dns:dev:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: external-dns
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:k8s:ingress:dev:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: ingress
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:k8s:external-secrets:dev:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: external-secrets
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:k8s:storage:dev:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: storage
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:k8s:secrets-store-provider-aws:dev:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: secrets-store-provider-aws
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+# Individual k8s-resources app uninstall jobs - Prod
+uninstall:k8s:external-dns:prod:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: external-dns
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+uninstall:k8s:ingress:prod:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: ingress
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+uninstall:k8s:external-secrets:prod:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: external-secrets
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+uninstall:k8s:storage:prod:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: storage
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+uninstall:k8s:secrets-store-provider-aws:prod:
+  extends: .uninstall_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: secrets-store-provider-aws
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
+# Template for uninstalling all kustomize resources (environment-level)
+.uninstall_kustomize:
+  stage: uninstall
+  script:
+    - |
+      echo "🗑️  Uninstalling all Kustomize resources for $ENVIRONMENT..."
+      echo ""
+      echo "⚠️  WARNING: This will delete ALL resources managed by k8s-resources/environments/$ENVIRONMENT"
+      echo ""
+      
+      KUSTOMIZE_PATH="k8s-resources/environments/$ENVIRONMENT"
+      
+      if [ ! -d "$KUSTOMIZE_PATH" ]; then
+        echo "❌ ERROR: Kustomize path not found: $KUSTOMIZE_PATH"
+        exit 1
+      fi
+      
+      echo "📂 Path: $KUSTOMIZE_PATH"
+      echo ""
+      
+      # Show resources that will be deleted
+      echo "📋 Resources to be deleted:"
+      kubectl kustomize "$KUSTOMIZE_PATH" | grep "kind:" | sort | uniq -c || echo "No resources found"
+      echo ""
+      
+      echo "🗑️  Deleting all resources..."
+      if kubectl delete -k "$KUSTOMIZE_PATH" --ignore-not-found=true --timeout=10m; then
+        echo "✅ Successfully uninstalled all kustomize resources"
+      else
+        echo "❌ Failed to uninstall kustomize resources"
+        exit 1
+      fi
+  only: [main]
+  when: manual
+
+uninstall:kustomize:dev:
+  extends: .uninstall_kustomize
+  variables:
+    ENVIRONMENT: dev
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+uninstall:kustomize:prod:
+  extends: .uninstall_kustomize
+  variables:
+    ENVIRONMENT: prod
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
 .deploy_kustomize:
   stage: deploy
   script:
@@ -1342,6 +1628,13 @@ deploy:k8s:apps:prod:
   extends: .deploy_k8s_apps
 
 # Individual app deployment jobs - Dev
+deploy:k8s:external-dns:dev:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: dev
+    APP_NAME: external-dns
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
 deploy:k8s:ingress:dev:
   extends: .deploy_k8s_app
   variables:
@@ -1371,6 +1664,13 @@ deploy:k8s:secrets-store-provider-aws:dev:
     KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
 
 # Individual app deployment jobs - Prod
+deploy:k8s:external-dns:prod:
+  extends: .deploy_k8s_app
+  variables:
+    ENVIRONMENT: prod
+    APP_NAME: external-dns
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+
 deploy:k8s:ingress:prod:
   extends: .deploy_k8s_app
   variables:

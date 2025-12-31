@@ -8,29 +8,28 @@ This directory contains Kustomize configurations for deploying Extended RBAC per
 
 ```
 k8s-resources/external-dns/
-├── kustomization.yaml           # Base kustomization
-├── extended-rbac.yaml           # RBAC resources
-├── overlays/
+├── base/                        # Base Kustomize configuration
+│   ├── kustomization.yaml      # Base kustomization
+│   ├── extended-rbac.yaml      # RBAC resources
+│   └── README.md               # Base documentation
+├── overlays/                    # Environment-specific overlays
 │   ├── dev/
 │   │   └── kustomization.yaml  # Dev environment overlay
 │   └── prod/
 │       └── kustomization.yaml  # Prod environment overlay
-└── README.md                    # This file
+├── README.md                    # This file
+└── KUSTOMIZE-DEPLOYMENT-GUIDE.md # Detailed deployment guide
 ```
+
+### Kustomize Structure
+
+Following Kustomize best practices:
+- **base/** - Contains common resources shared across all environments
+- **overlays/** - Contains environment-specific configurations that extend/modify the base
 
 ## Quick Start
 
-### Deploy Base Configuration
-
-```bash
-# Preview what will be deployed
-kubectl kustomize k8s-resources/external-dns/
-
-# Deploy to cluster
-kubectl apply -k k8s-resources/external-dns/
-```
-
-### Deploy with Environment Overlay
+### Deploy with Environment Overlay (Recommended)
 
 ```bash
 # Development
@@ -38,6 +37,16 @@ kubectl apply -k k8s-resources/external-dns/overlays/dev/
 
 # Production
 kubectl apply -k k8s-resources/external-dns/overlays/prod/
+```
+
+### Deploy Base Configuration Directly (Not Recommended)
+
+```bash
+# Preview what will be deployed
+kubectl kustomize k8s-resources/external-dns/base/
+
+# Deploy to cluster (use overlays instead)
+kubectl apply -k k8s-resources/external-dns/base/
 ```
 
 ## What Gets Deployed

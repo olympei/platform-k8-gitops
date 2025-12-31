@@ -5,8 +5,8 @@ kind: Kustomization
 # Deploy with: kubectl apply -k k8s-resources/external-dns/overlays/prod
 
 # Base configuration
-bases:
-  - ../../
+resources:
+  - ../../base
 
 # Namespace override for prod
 namespace: external-dns
