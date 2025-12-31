@@ -18,6 +18,62 @@ serviceAccount:
     # Pod Identity annotation (used when authMethod is "pod-identity")
     eks.amazonaws.com/pod-identity-association-role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-dev"
 
+# Extended RBAC configuration (optional)
+# Provides additional permissions for Gateway API, Istio, etc.
+rbac:
+  extended:
+    enabled: true  # Enable extended ClusterRole
+    annotations:
+      description: "Extended permissions for External DNS"
+    rules:
+      core:
+        enabled: true
+      ingress:
+        enabled: true
+      gatewayAPI:
+        enabled: true  # Enable Gateway API support
+      istio:
+        enabled: true  # Enable Istio support
+      contour:
+        enabled: false
+      ambassador:
+        enabled: false
+      traefik:
+        enabled: false
+      f5:
+        enabled: false
+      openshift:
+        enabled: false
+      kong:
+        enabled: false
+      gloo:
+        enabled: false
+      skipper:
+        enabled: false
+      dnsendpoint:
+        enabled: true  # Enable DNSEndpoint CRD
+      events:
+        enabled: true  # Enable event creation
+    additionalRules: []
+  
+  crdReader:
+    enabled: true  # Enable CRD reader role
+    annotations:
+      description: "Allows External DNS to read CRD definitions"
+  
+  namespaceRole:
+    enabled: true  # Enable namespace role
+    annotations:
+      description: "Namespace-scoped permissions"
+    rules:
+      configmaps:
+        enabled: true
+      secrets:
+        enabled: false  # Not needed with IRSA/Pod Identity
+      leases:
+        enabled: true  # For leader election
+    additionalRules: []
+
 # Provider configuration
 provider:
   name: aws

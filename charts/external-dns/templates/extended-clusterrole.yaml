@@ -1,0 +1,223 @@
+{{- if .Values.rbac.extended.enabled }}
+# Extended ClusterRole for External DNS
+# Provides additional permissions beyond the default Helm chart
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "external-dns.fullname" . }}-extended
+  labels:
+    {{- include "external-dns.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-extended
+  {{- with .Values.rbac.extended.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  # Core resources (standard External DNS permissions)
+  {{- if .Values.rbac.extended.rules.core.enabled }}
+  - apiGroups: [""]
+    resources:
+      - services
+      - endpoints
+      - pods
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Ingress resources
+  {{- if .Values.rbac.extended.rules.ingress.enabled }}
+  - apiGroups:
+      - extensions
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Gateway API resources
+  {{- if .Values.rbac.extended.rules.gatewayAPI.enabled }}
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - gateways
+      - httproutes
+      - tlsroutes
+      - tcproutes
+      - udproutes
+      - grpcroutes
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Istio resources
+  {{- if .Values.rbac.extended.rules.istio.enabled }}
+  - apiGroups:
+      - networking.istio.io
+    resources:
+      - gateways
+      - virtualservices
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Contour HTTPProxy
+  {{- if .Values.rbac.extended.rules.contour.enabled }}
+  - apiGroups:
+      - projectcontour.io
+    resources:
+      - httpproxies
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Ambassador Mapping
+  {{- if .Values.rbac.extended.rules.ambassador.enabled }}
+  - apiGroups:
+      - getambassador.io
+    resources:
+      - hosts
+      - mappings
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Traefik IngressRoute
+  {{- if .Values.rbac.extended.rules.traefik.enabled }}
+  - apiGroups:
+      - traefik.containo.us
+      - traefik.io
+    resources:
+      - ingressroutes
+      - ingressroutetcps
+      - ingressrouteudps
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # F5 VirtualServer
+  {{- if .Values.rbac.extended.rules.f5.enabled }}
+  - apiGroups:
+      - cis.f5.com
+    resources:
+      - virtualservers
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # OpenShift Route
+  {{- if .Values.rbac.extended.rules.openshift.enabled }}
+  - apiGroups:
+      - route.openshift.io
+    resources:
+      - routes
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Kong Ingress
+  {{- if .Values.rbac.extended.rules.kong.enabled }}
+  - apiGroups:
+      - configuration.konghq.com
+    resources:
+      - tcpingresses
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Gloo Edge
+  {{- if .Values.rbac.extended.rules.gloo.enabled }}
+  - apiGroups:
+      - gloo.solo.io
+      - gateway.solo.io
+    resources:
+      - proxies
+      - virtualservices
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Skipper RouteGroup
+  {{- if .Values.rbac.extended.rules.skipper.enabled }}
+  - apiGroups:
+      - zalando.org
+    resources:
+      - routegroups
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # DNSEndpoint CRD
+  {{- if .Values.rbac.extended.rules.dnsendpoint.enabled }}
+  - apiGroups:
+      - externaldns.k8s.io
+    resources:
+      - dnsendpoints
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  {{- end }}
+
+  # Events (for debugging and monitoring)
+  {{- if .Values.rbac.extended.rules.events.enabled }}
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  {{- end }}
+
+  {{- with .Values.rbac.extended.additionalRules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+# ClusterRoleBinding for the extended permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "external-dns.fullname" . }}-extended
+  labels:
+    {{- include "external-dns.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-extended
+  {{- with .Values.rbac.extended.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "external-dns.fullname" . }}-extended
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "external-dns.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

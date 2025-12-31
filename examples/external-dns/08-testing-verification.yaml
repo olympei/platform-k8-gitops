@@ -1,0 +1,487 @@
+# External DNS Testing and Verification Guide
+# This file contains comprehensive testing scenarios and verification commands
+
+---
+# Test Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-external-dns
+  namespace: default
+  labels:
+    app: test-external-dns
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-external-dns
+  template:
+    metadata:
+      labels:
+        app: test-external-dns
+    spec:
+      containers:
+        - name: app
+          image: hashicorp/http-echo:latest
+          args:
+            - "-text=External DNS Test Application"
+            - "-listen=:8080"
+          ports:
+            - containerPort: 8080
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+
+---
+# Test Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-external-dns-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: test-external-dns
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+
+---
+# Test Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-external-dns-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: test.example.com
+    external-dns.alpha.kubernetes.io/ttl: "60"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  ingressClassName: alb
+  rules:
+    - host: test.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: test-external-dns-service
+                port:
+                  number: 80
+
+---
+# ============================================================================
+# TESTING SCENARIOS
+# ============================================================================
+
+# Scenario 1: Basic DNS Creation Test
+# ====================================
+#
+# 1. Deploy test application:
+#    kubectl apply -f 08-testing-verification.yaml
+#
+# 2. Wait for Ingress to get ALB:
+#    kubectl get ingress test-external-dns-ingress -w
+#    # Wait until ADDRESS column shows ALB DNS
+#
+# 3. Get ALB DNS name:
+#    ALB_DNS=$(kubectl get ingress test-external-dns-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+#    echo "ALB DNS: $ALB_DNS"
+#
+# 4. Check External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=50
+#    # Look for: "CREATE: test.example.com A"
+#
+# 5. Verify Route53 record created:
+#    ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='example.com.'].Id" --output text | cut -d'/' -f3)
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='test.example.com.']"
+#
+# 6. Test DNS resolution:
+#    nslookup test.example.com
+#    dig test.example.com
+#    dig +short test.example.com
+#
+# 7. Test HTTP access:
+#    curl http://test.example.com
+#    # Expected: "External DNS Test Application"
+#
+# 8. Verify response headers:
+#    curl -I http://test.example.com
+#
+# ✓ PASS: DNS record created and application accessible
+
+---
+# Scenario 2: DNS Update Test
+# ===========================
+#
+# 1. Note current ALB DNS:
+#    ALB_DNS_OLD=$(kubectl get ingress test-external-dns-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+#    echo "Current ALB: $ALB_DNS_OLD"
+#
+# 2. Trigger Ingress update (force ALB recreation):
+#    kubectl annotate ingress test-external-dns-ingress test-update=true --overwrite
+#
+# 3. Watch for ALB change:
+#    kubectl get ingress test-external-dns-ingress -w
+#
+# 4. Check External DNS logs for UPDATE:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=50 | grep UPDATE
+#
+# 5. Verify DNS record updated:
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='test.example.com.'].ResourceRecords"
+#
+# 6. Wait for TTL to expire (60 seconds)
+#
+# 7. Test DNS resolution shows new value:
+#    dig +short test.example.com
+#
+# ✓ PASS: DNS record updated successfully
+
+---
+# Scenario 3: DNS Deletion Test
+# ==============================
+#
+# 1. Verify DNS exists before deletion:
+#    nslookup test.example.com
+#
+# 2. Delete Ingress:
+#    kubectl delete ingress test-external-dns-ingress
+#
+# 3. Check External DNS logs for DELETE:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=50 | grep DELETE
+#    # Look for: "DELETE: test.example.com A"
+#
+# 4. Verify Route53 record deleted:
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='test.example.com.']"
+#    # Should return empty
+#
+# 5. Test DNS resolution fails:
+#    nslookup test.example.com
+#    # Should return NXDOMAIN or no records
+#
+# 6. Verify TXT record also deleted:
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='test.example.com.' && Type=='TXT']"
+#
+# ✓ PASS: DNS record deleted successfully
+
+---
+# Scenario 4: TTL Verification Test
+# ==================================
+#
+# 1. Deploy with specific TTL:
+#    kubectl apply -f 08-testing-verification.yaml
+#
+# 2. Check TTL in Route53:
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='test.example.com.'].[Name,Type,TTL]" \
+#      --output table
+#    # Should show TTL: 60
+#
+# 3. Verify TTL with dig:
+#    dig test.example.com
+#    # Look for TTL value in ANSWER SECTION
+#
+# 4. Query multiple times and watch TTL decrease:
+#    for i in {1..5}; do
+#      echo "Query $i:"
+#      dig test.example.com | grep -A 1 "ANSWER SECTION"
+#      sleep 10
+#    done
+#    # TTL should decrease by ~10 each time
+#
+# ✓ PASS: TTL configured correctly
+
+---
+# Scenario 5: Multiple Hostnames Test
+# ====================================
+#
+# 1. Update Ingress with multiple hostnames:
+#    kubectl annotate ingress test-external-dns-ingress \
+#      external-dns.alpha.kubernetes.io/hostname=test.example.com,test2.example.com,test3.example.com \
+#      --overwrite
+#
+# 2. Check External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=50
+#    # Should see CREATE for test2 and test3
+#
+# 3. Verify all DNS records created:
+#    for hostname in test.example.com test2.example.com test3.example.com; do
+#      echo "Checking $hostname..."
+#      aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#        --query "ResourceRecordSets[?Name=='${hostname}.']"
+#    done
+#
+# 4. Test DNS resolution for all:
+#    for hostname in test.example.com test2.example.com test3.example.com; do
+#      echo "Testing $hostname..."
+#      nslookup $hostname
+#    done
+#
+# 5. Verify all point to same ALB:
+#    for hostname in test.example.com test2.example.com test3.example.com; do
+#      echo "$hostname:"
+#      dig +short $hostname
+#    done
+#
+# ✓ PASS: Multiple DNS records created
+
+---
+# Scenario 6: External DNS Health Check
+# ======================================
+#
+# 1. Check External DNS pod status:
+#    kubectl get pods -n external-dns
+#    # Should be Running
+#
+# 2. Check External DNS logs for errors:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=100 | grep -i error
+#    # Should be empty or only expected errors
+#
+# 3. Verify External DNS can access Route53:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=100 | grep -i "route53\|hosted zone"
+#
+# 4. Check IAM permissions:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=100 | grep -i "access denied\|unauthorized"
+#    # Should be empty
+#
+# 5. Verify sync interval:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=100 | grep -i "sync"
+#    # Should see regular sync messages
+#
+# ✓ PASS: External DNS healthy
+
+---
+# Scenario 7: DNS Propagation Test
+# =================================
+#
+# 1. Deploy application:
+#    kubectl apply -f 08-testing-verification.yaml
+#
+# 2. Wait for DNS record creation:
+#    sleep 60
+#
+# 3. Test with multiple DNS servers:
+#    echo "Testing with Google DNS (8.8.8.8):"
+#    dig @8.8.8.8 test.example.com
+#    
+#    echo "Testing with Cloudflare DNS (1.1.1.1):"
+#    dig @1.1.1.1 test.example.com
+#    
+#    echo "Testing with AWS DNS:"
+#    dig test.example.com
+#
+# 4. Check authoritative nameservers:
+#    dig NS example.com
+#
+# 5. Query authoritative nameserver directly:
+#    NS=$(dig +short NS example.com | head -1)
+#    dig @$NS test.example.com
+#
+# ✓ PASS: DNS propagated to all servers
+
+---
+# Scenario 8: Load Test DNS Updates
+# ==================================
+#
+# 1. Create multiple Ingresses rapidly:
+#    for i in {1..10}; do
+#      cat <<EOF | kubectl apply -f -
+#    apiVersion: networking.k8s.io/v1
+#    kind: Ingress
+#    metadata:
+#      name: load-test-$i
+#      annotations:
+#        external-dns.alpha.kubernetes.io/hostname: load-test-$i.example.com
+#        alb.ingress.kubernetes.io/scheme: internet-facing
+#        alb.ingress.kubernetes.io/target-type: ip
+#        alb.ingress.kubernetes.io/group.name: load-test
+#    spec:
+#      ingressClassName: alb
+#      rules:
+#        - host: load-test-$i.example.com
+#          http:
+#            paths:
+#              - path: /
+#                pathType: Prefix
+#                backend:
+#                  service:
+#                    name: test-external-dns-service
+#                    port:
+#                      number: 80
+#    EOF
+#    done
+#
+# 2. Watch External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns -f
+#
+# 3. Verify all DNS records created:
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?contains(Name, 'load-test')].[Name]" \
+#      --output text | wc -l
+#    # Should show 10 records
+#
+# 4. Cleanup:
+#    for i in {1..10}; do
+#      kubectl delete ingress load-test-$i
+#    done
+#
+# ✓ PASS: Handles multiple DNS updates
+
+---
+# Scenario 9: Ownership Verification Test
+# ========================================
+#
+# 1. Check TXT records for ownership:
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Type=='TXT'].[Name,ResourceRecords[0].Value]" \
+#      --output table
+#
+# 2. Verify ownership ID matches:
+#    OWNER_ID=$(kubectl get deployment -n external-dns external-dns -o jsonpath='{.spec.template.spec.containers[0].args}' | grep -o 'txt-owner-id=[^[:space:]]*' | cut -d'=' -f2)
+#    echo "Owner ID: $OWNER_ID"
+#    
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Type=='TXT' && contains(ResourceRecords[0].Value, '$OWNER_ID')]"
+#
+# 3. Test ownership conflict (if multiple clusters):
+#    # Try to create same hostname in different cluster
+#    # Should see ownership conflict in logs
+#
+# ✓ PASS: Ownership tracking working
+
+---
+# Scenario 10: Failover Test
+# ===========================
+#
+# 1. Deploy application with DNS:
+#    kubectl apply -f 08-testing-verification.yaml
+#
+# 2. Verify application accessible:
+#    curl http://test.example.com
+#
+# 3. Scale down application:
+#    kubectl scale deployment test-external-dns --replicas=0
+#
+# 4. Verify ALB health checks fail:
+#    # Wait 30-60 seconds
+#    curl http://test.example.com
+#    # Should return 503 or timeout
+#
+# 5. Scale up application:
+#    kubectl scale deployment test-external-dns --replicas=2
+#
+# 6. Wait for pods to be ready:
+#    kubectl wait --for=condition=ready pod -l app=test-external-dns --timeout=60s
+#
+# 7. Verify application accessible again:
+#    curl http://test.example.com
+#    # Should return success
+#
+# ✓ PASS: Failover working correctly
+
+---
+# ============================================================================
+# VERIFICATION COMMANDS
+# ============================================================================
+
+# Check External DNS Status
+# =========================
+# kubectl get pods -n external-dns
+# kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=100
+# kubectl describe deployment -n external-dns external-dns
+
+# Check Route53 Records
+# =====================
+# ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='example.com.'].Id" --output text | cut -d'/' -f3)
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID --query "ResourceRecordSets[?Type=='A']"
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID --query "ResourceRecordSets[?Type=='TXT']"
+
+# Test DNS Resolution
+# ===================
+# nslookup test.example.com
+# dig test.example.com
+# dig +short test.example.com
+# dig +trace test.example.com
+# dig @8.8.8.8 test.example.com
+
+# Test HTTP Access
+# ================
+# curl http://test.example.com
+# curl -v http://test.example.com
+# curl -I http://test.example.com
+# curl -H "Host: test.example.com" http://<alb-dns>
+
+# Check Ingress Status
+# ====================
+# kubectl get ingress
+# kubectl describe ingress test-external-dns-ingress
+# kubectl get ingress test-external-dns-ingress -o yaml
+
+# Monitor DNS Changes
+# ===================
+# watch -n 5 'aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID --query "ResourceRecordSets[?Name=='\''test.example.com.'\'']"'
+# watch -n 5 'dig +short test.example.com'
+
+---
+# ============================================================================
+# TROUBLESHOOTING CHECKLIST
+# ============================================================================
+
+# 1. External DNS Not Running
+#    □ kubectl get pods -n external-dns
+#    □ kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns
+#    □ kubectl describe pod -n external-dns
+
+# 2. DNS Record Not Created
+#    □ Check annotation exists: kubectl get ingress -o yaml | grep external-dns
+#    □ Check Ingress has LoadBalancer: kubectl get ingress
+#    □ Check External DNS logs: kubectl logs -n external-dns
+#    □ Verify IAM permissions
+#    □ Check domain filter matches
+
+# 3. DNS Resolution Fails
+#    □ Verify record in Route53: aws route53 list-resource-record-sets
+#    □ Check TTL hasn't expired
+#    □ Test with different DNS servers
+#    □ Check authoritative nameservers
+
+# 4. Application Not Accessible
+#    □ Test DNS resolution: nslookup
+#    □ Test ALB directly: curl http://<alb-dns>
+#    □ Check ALB target health
+#    □ Verify security groups
+#    □ Check pod status
+
+# 5. DNS Not Updating
+#    □ Check External DNS sync interval
+#    □ Verify ownership (TXT records)
+#    □ Check for errors in logs
+#    □ Verify IAM permissions for updates
+
+---
+# Cleanup All Test Resources
+# ===========================
+# kubectl delete -f 08-testing-verification.yaml
+# kubectl delete ingress -l test=external-dns
+

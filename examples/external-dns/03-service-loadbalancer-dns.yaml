@@ -1,0 +1,258 @@
+# Service LoadBalancer with External DNS
+# This example creates DNS records for Service type LoadBalancer (NLB)
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nlb-app
+  namespace: default
+  labels:
+    app: nlb-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nlb-app
+  template:
+    metadata:
+      labels:
+        app: nlb-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+            - containerPort: 443
+              name: https
+
+---
+# Service type LoadBalancer with External DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: nlb-service
+  namespace: default
+  annotations:
+    # External DNS annotation for Service
+    external-dns.alpha.kubernetes.io/hostname: service.example.com
+    
+    # Optional: Custom TTL
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    
+    # AWS Load Balancer Controller - NLB configuration
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    
+    # Optional: Cross-zone load balancing
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nlb-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+    - name: https
+      port: 443
+      targetPort: 443
+      protocol: TCP
+
+---
+# Example: Internal NLB with Private DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-nlb-service
+  namespace: default
+  annotations:
+    # Use internal-hostname for private hosted zone
+    external-dns.alpha.kubernetes.io/internal-hostname: internal-service.example.com
+    
+    # AWS Load Balancer Controller - Internal NLB
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nlb-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+# Example: Multiple hostnames for Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-hostname-nlb
+  namespace: default
+  annotations:
+    # Multiple hostnames for same NLB
+    external-dns.alpha.kubernetes.io/hostname: service1.example.com,service2.example.com
+    
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nlb-app
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+# Testing:
+#
+# 1. Deploy:
+#    kubectl apply -f 03-service-loadbalancer-dns.yaml
+#
+# 2. Wait for NLB creation:
+#    kubectl get svc nlb-service -w
+#
+# 3. Get NLB DNS name:
+#    NLB_DNS=$(kubectl get svc nlb-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+#    echo "NLB DNS: $NLB_DNS"
+#
+# 4. Check External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=20
+#    # Look for: "CREATE: service.example.com A"
+#
+# 5. Verify Route53 record:
+#    ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='example.com.'].Id" --output text | cut -d'/' -f3)
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='service.example.com.']"
+#
+# 6. Test DNS resolution:
+#    nslookup service.example.com
+#    dig service.example.com
+#
+# 7. Test connectivity:
+#    curl http://service.example.com
+#    curl https://service.example.com
+#
+# 8. Verify NLB details:
+#    NLB_ARN=$(aws elbv2 describe-load-balancers \
+#      --query "LoadBalancers[?DNSName=='$NLB_DNS'].LoadBalancerArn" \
+#      --output text)
+#    aws elbv2 describe-load-balancers --load-balancer-arns $NLB_ARN
+
+---
+# Comparison: ALB (Ingress) vs NLB (Service)
+#
+# Use ALB (Ingress) when:
+# - Need HTTP/HTTPS routing
+# - Need host/path-based routing
+# - Need SSL termination at load balancer
+# - Need WAF integration
+# - Need Cognito authentication
+#
+# Use NLB (Service) when:
+# - Need TCP/UDP load balancing
+# - Need ultra-low latency
+# - Need static IP addresses
+# - Need to preserve source IP
+# - Need non-HTTP protocols (databases, game servers)
+
+---
+# Expected Route53 Record:
+#
+# Name: service.example.com
+# Type: A (Alias)
+# Alias Target: <NLB-DNS-NAME>
+# Routing Policy: Simple
+# TTL: 300
+#
+# TXT record for ownership:
+# Name: service.example.com
+# Type: TXT
+# Value: "heritage=external-dns,external-dns/owner=<owner-id>,external-dns/resource=service/default/nlb-service"
+
+---
+# Advanced: NLB with Static IP
+apiVersion: v1
+kind: Service
+metadata:
+  name: static-ip-nlb
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: static.example.com
+    
+    # Allocate Elastic IPs for NLB
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-eip-allocations: "eipalloc-xxxxx,eipalloc-yyyyy"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nlb-app
+  ports:
+    - port: 80
+      targetPort: 80
+
+---
+# Use Cases:
+#
+# 1. Database Access:
+#    - Expose PostgreSQL/MySQL via NLB
+#    - DNS name for database connection string
+#    - Example: db.example.com:5432
+#
+# 2. Game Servers:
+#    - Low latency TCP/UDP
+#    - DNS name for game server
+#    - Example: game.example.com:7777
+#
+# 3. MQTT/IoT:
+#    - MQTT broker behind NLB
+#    - DNS name for IoT devices
+#    - Example: mqtt.example.com:1883
+#
+# 4. gRPC Services:
+#    - gRPC over HTTP/2
+#    - NLB for TCP load balancing
+#    - Example: grpc.example.com:50051
+#
+# 5. VPN/Proxy:
+#    - VPN endpoint behind NLB
+#    - Static IP via Elastic IP
+#    - Example: vpn.example.com
+
+---
+# Monitoring:
+#
+# Check NLB health:
+# aws elbv2 describe-target-health \
+#   --target-group-arn <target-group-arn>
+#
+# Check NLB metrics:
+# aws cloudwatch get-metric-statistics \
+#   --namespace AWS/NetworkELB \
+#   --metric-name ActiveFlowCount \
+#   --dimensions Name=LoadBalancer,Value=<nlb-name> \
+#   --start-time 2025-12-30T00:00:00Z \
+#   --end-time 2025-12-30T23:59:59Z \
+#   --period 3600 \
+#   --statistics Average
+
+---
+# Cleanup:
+#
+# kubectl delete -f 03-service-loadbalancer-dns.yaml
+#
+# Verify DNS record deleted:
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#   --query "ResourceRecordSets[?Name=='service.example.com.']"
+

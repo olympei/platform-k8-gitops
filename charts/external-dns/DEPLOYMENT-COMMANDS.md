@@ -1,5 +1,84 @@
 # ExternalDNS Deployment Commands
 
+## Extended RBAC (Optional but Recommended)
+
+External DNS includes extended RBAC permissions available in multiple formats:
+
+### Option 1: Apply Standalone RBAC (Simplest)
+
+Apply the pre-configured RBAC file after Helm deployment:
+
+```bash
+# 1. Deploy External DNS with Helm
+helm upgrade --install external-dns \
+  ./charts/external-dns/charts/external-dns-1.19.0.tgz \
+  -f charts/external-dns/values-dev-direct.yaml \
+  -n external-dns \
+  --create-namespace
+
+# 2. Apply extended RBAC
+kubectl apply -f charts/external-dns/k8s-resources/extended-rbac.yaml
+
+# 3. Verify
+kubectl get clusterrole external-dns-extended
+kubectl auth can-i list gateways.gateway.networking.k8s.io \
+  --as=system:serviceaccount:external-dns:external-dns
+```
+
+### Option 2: Use Wrapper Chart with Templates
+
+Use the wrapper chart that includes both the packaged chart and custom templates:
+
+```bash
+# Build dependencies first
+cd charts/external-dns
+helm dependency build
+
+# Deploy wrapper chart
+helm upgrade --install external-dns . \
+  -f values-wrapper.yaml \
+  -n external-dns \
+  --create-namespace
+```
+
+### Option 3: Static YAML (Legacy)
+
+Apply the original static ClusterRole:
+
+```bash
+kubectl apply -f charts/external-dns/custom-clusterrole.yaml
+```
+
+### What's Included
+
+Extended permissions for:
+- **Gateway API**: Gateways, HTTPRoutes, TLSRoutes, TCPRoutes, UDPRoutes, GRPCRoutes
+- **Istio**: VirtualServices, Gateways
+- **DNSEndpoint CRD**: Custom DNS management
+- **Events**: Debugging and monitoring
+- **Leader Election**: Multi-replica support
+
+**Verify permissions:**
+```bash
+# Gateway API
+kubectl auth can-i list gateways.gateway.networking.k8s.io \
+  --as=system:serviceaccount:external-dns:external-dns
+
+# Istio
+kubectl auth can-i list virtualservices.networking.istio.io \
+  --as=system:serviceaccount:external-dns:external-dns
+
+# DNSEndpoint
+kubectl auth can-i list dnsendpoints.externaldns.k8s.io \
+  --as=system:serviceaccount:external-dns:external-dns
+```
+
+**Documentation:**
+- Standalone RBAC: `k8s-resources/extended-rbac.yaml`
+- Wrapper Chart: `values-wrapper.yaml` + `templates/`
+- Static YAML: `custom-clusterrole.yaml`
+- Guides: `CUSTOM-CLUSTERROLE-GUIDE.md`, `TEMPLATES-USAGE-GUIDE.md`
+
 ## Using the Default Chart Directly (Recommended)
 
 Since you're getting coalesce warnings with the wrapper structure, use the chart directly with the `-direct` values files.
@@ -7,12 +86,38 @@ Since you're getting coalesce warnings with the wrapper structure, use the chart
 ### Development Environment
 
 ```bash
-# Install/Upgrade
+# Method 1: Packaged chart + Standalone RBAC (Recommended)
+# =========================================================
+
+# 1. Deploy External DNS
 helm upgrade --install external-dns \
   ./charts/external-dns/charts/external-dns-1.19.0.tgz \
   --namespace external-dns \
   --create-namespace \
   --values charts/external-dns/values-dev-direct.yaml \
+  --wait \
+  --timeout 10m
+
+# 2. Apply extended RBAC
+kubectl apply -f charts/external-dns/k8s-resources/extended-rbac.yaml
+
+# 3. Verify
+kubectl get pods -n external-dns
+kubectl get clusterrole external-dns-extended
+kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=50
+
+# Method 2: Wrapper Chart (Alternative)
+# ======================================
+
+# 1. Build dependencies
+cd charts/external-dns
+helm dependency build
+
+# 2. Deploy wrapper chart
+helm upgrade --install external-dns . \
+  -f values-wrapper.yaml \
+  -n external-dns \
+  --create-namespace \
   --wait \
   --timeout 10m
 
@@ -29,7 +134,10 @@ helm upgrade --install external-dns \
 ### Production Environment
 
 ```bash
-# Install/Upgrade
+# 1. (Optional) Apply custom ClusterRole for extended permissions
+kubectl apply -f charts/external-dns/custom-clusterrole.yaml
+
+# 2. Install/Upgrade External DNS
 helm upgrade --install external-dns \
   ./charts/external-dns/charts/external-dns-1.19.0.tgz \
   --namespace external-dns \
@@ -37,6 +145,10 @@ helm upgrade --install external-dns \
   --values charts/external-dns/values-prod-direct.yaml \
   --wait \
   --timeout 10m
+
+# 3. Verify deployment
+kubectl get pods -n external-dns
+kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=50
 
 # Dry run first (recommended)
 helm upgrade --install external-dns \

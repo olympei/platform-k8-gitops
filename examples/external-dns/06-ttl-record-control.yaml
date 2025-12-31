@@ -1,0 +1,350 @@
+# TTL and Record Type Control with External DNS
+# This example demonstrates custom TTL and record type configuration
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ttl-test-app
+  namespace: default
+  labels:
+    app: ttl-test-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ttl-test-app
+  template:
+    metadata:
+      labels:
+        app: ttl-test-app
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ttl-test-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: ttl-test-app
+  ports:
+    - port: 80
+      targetPort: 80
+
+---
+# Example 1: Short TTL for testing/development
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: short-ttl-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: dev.example.com
+    
+    # Short TTL (60 seconds) for rapid DNS updates during testing
+    external-dns.alpha.kubernetes.io/ttl: "60"
+    
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: dev.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ttl-test-service
+                port:
+                  number: 80
+
+---
+# Example 2: Long TTL for production
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: long-ttl-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: prod.example.com
+    
+    # Long TTL (3600 seconds = 1 hour) for production stability
+    external-dns.alpha.kubernetes.io/ttl: "3600"
+    
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: prod.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ttl-test-service
+                port:
+                  number: 80
+
+---
+# Example 3: Default TTL (no annotation)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: default-ttl-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: default.example.com
+    # No TTL annotation - uses default (300 seconds)
+    
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: default.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ttl-test-service
+                port:
+                  number: 80
+
+---
+# Example 4: CNAME record type
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cname-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: cname.example.com
+    
+    # Force CNAME record instead of A record
+    # Note: This is rarely needed as External DNS auto-detects
+    # external-dns.alpha.kubernetes.io/record-type: CNAME
+    
+    # Specify target for CNAME
+    # external-dns.alpha.kubernetes.io/target: alb-xxxxx.us-east-1.elb.amazonaws.com
+    
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: cname.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ttl-test-service
+                port:
+                  number: 80
+
+---
+# TTL Recommendations:
+#
+# Development/Testing:
+# - TTL: 60-300 seconds
+# - Allows rapid DNS updates
+# - Faster testing cycles
+# - Quick rollback if needed
+#
+# Staging:
+# - TTL: 300-600 seconds
+# - Balance between flexibility and caching
+# - Moderate update speed
+#
+# Production:
+# - TTL: 300-3600 seconds
+# - Longer caching for stability
+# - Reduces DNS query load
+# - Consider impact on failover time
+#
+# High Availability:
+# - TTL: 60-300 seconds
+# - Faster failover
+# - More DNS queries
+# - Better for disaster recovery
+
+---
+# Testing TTL:
+#
+# 1. Deploy with short TTL:
+#    kubectl apply -f 06-ttl-record-control.yaml
+#
+# 2. Verify TTL in Route53:
+#    ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='example.com.'].Id" --output text | cut -d'/' -f3)
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='dev.example.com.'].[Name,Type,TTL]" \
+#      --output table
+#
+# 3. Check TTL with dig:
+#    dig dev.example.com
+#    # Look for TTL value in ANSWER SECTION
+#
+# 4. Test TTL expiration:
+#    # Query DNS
+#    dig dev.example.com
+#    
+#    # Note TTL value (e.g., 60)
+#    # Wait for TTL to expire
+#    # Query again - should get fresh value
+#    dig dev.example.com
+
+---
+# TTL Impact on Updates:
+#
+# Scenario: Update ALB (change Ingress)
+#
+# With TTL=60:
+# - DNS record updated immediately in Route53
+# - Clients cache for 60 seconds
+# - All clients see new value within 60 seconds
+#
+# With TTL=3600:
+# - DNS record updated immediately in Route53
+# - Clients cache for 3600 seconds (1 hour)
+# - Some clients may see old value for up to 1 hour
+
+---
+# Testing DNS Update with Different TTLs:
+#
+# 1. Deploy with short TTL (60s):
+#    kubectl apply -f short-ttl-ingress.yaml
+#
+# 2. Query and note result:
+#    dig +short dev.example.com
+#    # Result: alb-xxxxx.us-east-1.elb.amazonaws.com
+#
+# 3. Update Ingress (trigger ALB change):
+#    kubectl annotate ingress short-ttl-ingress test=update --overwrite
+#
+# 4. Wait 60 seconds for TTL to expire
+#
+# 5. Query again:
+#    dig +short dev.example.com
+#    # Should see updated value
+
+---
+# Record Type Comparison:
+#
+# A Record (Alias):
+# - Points to AWS resource (ALB, NLB, CloudFront)
+# - No additional charge
+# - Automatic health checks
+# - Recommended for AWS resources
+#
+# CNAME Record:
+# - Points to another domain name
+# - Cannot be used for apex domain (example.com)
+# - Can point to non-AWS resources
+# - Standard DNS charges apply
+#
+# External DNS Default Behavior:
+# - Uses A record (Alias) for AWS load balancers
+# - Automatically detects ALB/NLB
+# - No need to specify record type
+
+---
+# Advanced: Per-Environment TTL Strategy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dns-ttl-config
+  namespace: default
+data:
+  dev-ttl: "60"
+  staging-ttl: "300"
+  prod-ttl: "3600"
+
+---
+# Use ConfigMap in Ingress (via external tool or operator)
+# This is an example pattern, not directly supported by External DNS
+
+---
+# Monitoring TTL:
+#
+# Check current TTL values:
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#   --query "ResourceRecordSets[?Type=='A'].[Name,TTL]" \
+#   --output table
+#
+# Monitor DNS query count (affected by TTL):
+# aws cloudwatch get-metric-statistics \
+#   --namespace AWS/Route53 \
+#   --metric-name DNSQueries \
+#   --dimensions Name=HostedZoneId,Value=$ZONE_ID \
+#   --start-time 2025-12-30T00:00:00Z \
+#   --end-time 2025-12-30T23:59:59Z \
+#   --period 3600 \
+#   --statistics Sum
+
+---
+# Best Practices:
+#
+# 1. Start with short TTL during initial deployment
+#    - Allows quick fixes if issues found
+#    - Increase TTL once stable
+#
+# 2. Use environment-specific TTLs
+#    - Dev: 60s
+#    - Staging: 300s
+#    - Prod: 600-3600s
+#
+# 3. Consider failover requirements
+#    - Shorter TTL = faster failover
+#    - Longer TTL = more caching, less DNS load
+#
+# 4. Document TTL choices
+#    - Add comments explaining TTL values
+#    - Include in runbooks
+#
+# 5. Test TTL impact
+#    - Verify DNS propagation time
+#    - Test failover scenarios
+#    - Monitor DNS query costs
+
+---
+# TTL and Disaster Recovery:
+#
+# For critical services with DR requirements:
+#
+# 1. Use shorter TTL (60-300s)
+# 2. Enables faster failover
+# 3. Clients pick up new DNS quickly
+# 4. Trade-off: more DNS queries
+#
+# Example DR scenario:
+# - Primary region fails
+# - Update DNS to point to DR region
+# - With TTL=60, all clients updated within 60s
+# - With TTL=3600, could take up to 1 hour
+
+---
+# Cleanup:
+#
+# kubectl delete -f 06-ttl-record-control.yaml
+#
+# Verify records deleted:
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#   --query "ResourceRecordSets[?contains(Name, 'example.com')]"
+

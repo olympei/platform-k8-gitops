@@ -1,0 +1,359 @@
+# DNS Ownership with External DNS
+# This example demonstrates TXT record ownership for multi-tenant scenarios
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ownership-app
+  namespace: default
+  labels:
+    app: ownership-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ownership-app
+  template:
+    metadata:
+      labels:
+        app: ownership-app
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ownership-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: ownership-app
+  ports:
+    - port: 80
+      targetPort: 80
+
+---
+# Ingress with ownership ID
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ownership-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: app.example.com
+    
+    # Ownership ID - identifies which External DNS instance owns this record
+    # This should match the --txt-owner-id flag in External DNS deployment
+    external-dns.alpha.kubernetes.io/owner-id: production-cluster
+    
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ownership-service
+                port:
+                  number: 80
+
+---
+# How Ownership Works:
+#
+# External DNS creates TXT records to track ownership:
+#
+# For hostname: app.example.com
+# Creates TXT record: app.example.com
+# Value: "heritage=external-dns,external-dns/owner=production-cluster,external-dns/resource=ingress/default/ownership-ingress"
+#
+# This prevents multiple External DNS instances from conflicting
+
+---
+# Multi-Cluster Scenario:
+#
+# Cluster 1 (Production):
+# - External DNS with --txt-owner-id=production-cluster
+# - Manages: app.example.com, api.example.com
+#
+# Cluster 2 (Development):
+# - External DNS with --txt-owner-id=development-cluster
+# - Manages: dev.example.com, test.example.com
+#
+# Both can coexist in same Route53 hosted zone without conflicts
+
+---
+# Example: Production Cluster External DNS
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns
+  namespace: external-dns
+  labels:
+    app: external-dns
+    cluster: production
+spec:
+  template:
+    spec:
+      containers:
+        - name: external-dns
+          image: registry.k8s.io/external-dns/external-dns:v0.15.0
+          args:
+            - --source=service
+            - --source=ingress
+            - --provider=aws
+            - --policy=sync
+            - --registry=txt
+            - --txt-owner-id=production-cluster  # Unique owner ID
+            - --txt-prefix=prod-
+            - --domain-filter=example.com
+
+---
+# Example: Development Cluster External DNS
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns
+  namespace: external-dns
+  labels:
+    app: external-dns
+    cluster: development
+spec:
+  template:
+    spec:
+      containers:
+        - name: external-dns
+          image: registry.k8s.io/external-dns/external-dns:v0.15.0
+          args:
+            - --source=service
+            - --source=ingress
+            - --provider=aws
+            - --policy=sync
+            - --registry=txt
+            - --txt-owner-id=development-cluster  # Different owner ID
+            - --txt-prefix=dev-
+            - --domain-filter=example.com
+
+---
+# Testing Ownership:
+#
+# 1. Deploy to production cluster:
+#    kubectl apply -f 07-dns-ownership.yaml
+#
+# 2. Check TXT record created:
+#    ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='example.com.'].Id" --output text | cut -d'/' -f3)
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='app.example.com.' && Type=='TXT']"
+#
+# 3. Verify ownership in TXT record:
+#    # Should contain: "heritage=external-dns,external-dns/owner=production-cluster"
+#
+# 4. Try to create same hostname in dev cluster:
+#    # External DNS in dev cluster will see TXT record
+#    # Will NOT modify record owned by production cluster
+#    # Check dev cluster External DNS logs for ownership conflict
+
+---
+# Expected TXT Record:
+#
+# Name: app.example.com
+# Type: TXT
+# Value: "heritage=external-dns,external-dns/owner=production-cluster,external-dns/resource=ingress/default/ownership-ingress"
+# TTL: 300
+#
+# This TXT record:
+# - Identifies the owner (production-cluster)
+# - Tracks the source resource (ingress/default/ownership-ingress)
+# - Prevents other External DNS instances from modifying
+
+---
+# Ownership Conflict Scenario:
+#
+# 1. Cluster A creates: app.example.com → ALB-A
+#    TXT: owner=cluster-a
+#
+# 2. Cluster B tries to create: app.example.com → ALB-B
+#    External DNS in Cluster B sees TXT record
+#    Detects owner=cluster-a (not cluster-b)
+#    SKIPS creation to avoid conflict
+#    Logs: "Skipping app.example.com: owned by cluster-a"
+
+---
+# Viewing Ownership Information:
+#
+# List all TXT records (ownership records):
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#   --query "ResourceRecordSets[?Type=='TXT'].[Name,ResourceRecords[0].Value]" \
+#   --output table
+#
+# Filter by owner:
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#   --query "ResourceRecordSets[?Type=='TXT' && contains(ResourceRecords[0].Value, 'production-cluster')]"
+
+---
+# Ownership Transfer:
+#
+# To transfer ownership from one cluster to another:
+#
+# 1. Delete resource in old cluster:
+#    kubectl delete ingress ownership-ingress
+#    # This deletes both A and TXT records
+#
+# 2. Create resource in new cluster:
+#    kubectl apply -f ownership-ingress.yaml
+#    # New cluster creates records with its owner ID
+
+---
+# Force Ownership (Dangerous):
+#
+# To force External DNS to take ownership:
+#
+# 1. Manually delete TXT record:
+#    aws route53 change-resource-record-sets \
+#      --hosted-zone-id $ZONE_ID \
+#      --change-batch '{
+#        "Changes": [{
+#          "Action": "DELETE",
+#          "ResourceRecordSet": {
+#            "Name": "app.example.com",
+#            "Type": "TXT",
+#            "TTL": 300,
+#            "ResourceRecords": [{"Value": "\"heritage=external-dns,...\""}]
+#          }
+#        }]
+#      }'
+#
+# 2. External DNS will recreate with new owner
+#
+# WARNING: This can cause conflicts if both clusters are active
+
+---
+# Best Practices:
+#
+# 1. Use unique owner IDs per cluster:
+#    - production-cluster
+#    - staging-cluster
+#    - development-cluster
+#
+# 2. Use descriptive owner IDs:
+#    - Include environment and region
+#    - Example: prod-us-east-1, dev-eu-west-1
+#
+# 3. Document owner IDs:
+#    - Maintain list of clusters and their owner IDs
+#    - Include in cluster documentation
+#
+# 4. Use txt-prefix for additional organization:
+#    - --txt-prefix=prod-
+#    - Creates: prod-app.example.com (TXT)
+#
+# 5. Monitor ownership conflicts:
+#    - Check External DNS logs for "owned by" messages
+#    - Alert on ownership conflicts
+
+---
+# Multi-Tenant Example:
+#
+# Tenant 1 Cluster:
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tenant1-ingress
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: tenant1.example.com
+    external-dns.alpha.kubernetes.io/owner-id: tenant1-cluster
+spec:
+  ingressClassName: alb
+  rules:
+    - host: tenant1.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: tenant1-service
+                port:
+                  number: 80
+
+---
+# Tenant 2 Cluster:
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tenant2-ingress
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: tenant2.example.com
+    external-dns.alpha.kubernetes.io/owner-id: tenant2-cluster
+spec:
+  ingressClassName: alb
+  rules:
+    - host: tenant2.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: tenant2-service
+                port:
+                  number: 80
+
+---
+# Troubleshooting Ownership Issues:
+#
+# Issue: DNS record not created
+#
+# 1. Check External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns | grep -i owner
+#
+# 2. Look for ownership conflict:
+#    # Log message: "Skipping app.example.com: owned by other-cluster"
+#
+# 3. Check TXT record:
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='app.example.com.' && Type=='TXT']"
+#
+# 4. Verify owner ID matches:
+#    # TXT record owner should match --txt-owner-id in deployment
+#
+# 5. If ownership is incorrect:
+#    # Delete resource from old cluster
+#    # Or manually delete TXT record (carefully!)
+
+---
+# Monitoring Ownership:
+#
+# Create CloudWatch alarm for ownership conflicts:
+#
+# 1. Enable External DNS metrics
+# 2. Monitor log patterns for "owned by"
+# 3. Alert when conflicts detected
+#
+# Example log filter:
+# kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns \
+#   | grep "owned by" \
+#   | grep -v "owned by $(kubectl get deployment -n external-dns external-dns -o jsonpath='{.spec.template.spec.containers[0].args}' | grep txt-owner-id | cut -d'=' -f2)"
+
+---
+# Cleanup:
+#
+# kubectl delete -f 07-dns-ownership.yaml
+#
+# Verify both A and TXT records deleted:
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#   --query "ResourceRecordSets[?Name=='app.example.com.']"
+

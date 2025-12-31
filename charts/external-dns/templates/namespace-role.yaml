@@ -1,0 +1,78 @@
+{{- if .Values.rbac.namespaceRole.enabled }}
+# Role for namespace-specific resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "external-dns.fullname" . }}-namespace
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "external-dns.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-namespace
+  {{- with .Values.rbac.namespaceRole.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  # ConfigMaps (for configuration)
+  {{- if .Values.rbac.namespaceRole.rules.configmaps.enabled }}
+  - apiGroups: [""]
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Secrets (for credentials if not using IRSA/Pod Identity)
+  {{- if .Values.rbac.namespaceRole.rules.secrets.enabled }}
+  - apiGroups: [""]
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  {{- end }}
+
+  # Leases (for leader election in multi-replica setup)
+  {{- if .Values.rbac.namespaceRole.rules.leases.enabled }}
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  {{- end }}
+
+  {{- with .Values.rbac.namespaceRole.additionalRules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+# RoleBinding for namespace-specific permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "external-dns.fullname" . }}-namespace
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "external-dns.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-namespace
+  {{- with .Values.rbac.namespaceRole.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "external-dns.fullname" . }}-namespace
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "external-dns.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

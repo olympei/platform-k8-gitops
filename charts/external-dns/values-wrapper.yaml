@@ -1,0 +1,109 @@
+# Wrapper Chart Values for External DNS with Extended RBAC
+# This file configures both the external-dns subchart and extended RBAC templates
+
+# Enable the external-dns subchart
+external-dns:
+  enabled: true
+  
+  # Image configuration
+  image:
+    repository: registry.k8s.io/external-dns/external-dns
+    tag: v0.19.0
+    pullPolicy: IfNotPresent
+  
+  # Service account configuration
+  serviceAccount:
+    create: true
+    name: external-dns
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/EKS-ExternalDNS-Role-dev"
+  
+  # Provider configuration
+  provider:
+    name: aws
+  
+  # Domain filters
+  domainFilters:
+    - "dev.example.com"
+  
+  # Sources
+  sources:
+    - service
+    - ingress
+    - istio-gateway
+    - istio-virtualservice
+  
+  # External DNS arguments
+  extraArgs:
+    - --aws-zone-type=private
+    - --log-level=info
+    - --interval=1m
+    - --txt-owner-id=external-dns-dev
+  
+  # Resources
+  resources:
+    limits:
+      cpu: 50m
+      memory: 50Mi
+    requests:
+      cpu: 50m
+      memory: 50Mi
+
+# Extended RBAC configuration (for wrapper chart templates)
+rbac:
+  extended:
+    enabled: true
+    annotations:
+      description: "Extended permissions for External DNS"
+    rules:
+      core:
+        enabled: true
+      ingress:
+        enabled: true
+      gatewayAPI:
+        enabled: true
+      istio:
+        enabled: true
+      contour:
+        enabled: false
+      ambassador:
+        enabled: false
+      traefik:
+        enabled: false
+      f5:
+        enabled: false
+      openshift:
+        enabled: false
+      kong:
+        enabled: false
+      gloo:
+        enabled: false
+      skipper:
+        enabled: false
+      dnsendpoint:
+        enabled: true
+      events:
+        enabled: true
+    additionalRules: []
+  
+  crdReader:
+    enabled: true
+    annotations:
+      description: "Allows External DNS to read CRD definitions"
+  
+  namespaceRole:
+    enabled: true
+    annotations:
+      description: "Namespace-scoped permissions"
+    rules:
+      configmaps:
+        enabled: true
+      secrets:
+        enabled: false
+      leases:
+        enabled: true
+    additionalRules: []
+
+# Override these if needed
+nameOverride: ""
+fullnameOverride: ""

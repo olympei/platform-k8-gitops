@@ -1,0 +1,262 @@
+# Multiple Hostnames with External DNS
+# This example creates multiple DNS records from a single Ingress
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-hostname-app
+  namespace: default
+  labels:
+    app: multi-hostname-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: multi-hostname-app
+  template:
+    metadata:
+      labels:
+        app: multi-hostname-app
+    spec:
+      containers:
+        - name: app
+          image: hashicorp/http-echo:latest
+          args:
+            - "-text=Multi-Hostname Application"
+          ports:
+            - containerPort: 5678
+              name: http
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-hostname-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: multi-hostname-app
+  ports:
+    - port: 80
+      targetPort: 5678
+      protocol: TCP
+
+---
+# Ingress with multiple hostnames
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: multi-hostname-ingress
+  namespace: default
+  annotations:
+    # Multiple hostnames separated by commas
+    # External DNS will create a Route53 record for each
+    external-dns.alpha.kubernetes.io/hostname: app.example.com,www.example.com,api.example.com
+    
+    # Optional: Set custom TTL for all records
+    external-dns.alpha.kubernetes.io/ttl: "60"
+    
+    # AWS Load Balancer Controller
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  ingressClassName: alb
+  rules:
+    # Rule for app.example.com
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: multi-hostname-service
+                port:
+                  number: 80
+    
+    # Rule for www.example.com
+    - host: www.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: multi-hostname-service
+                port:
+                  number: 80
+    
+    # Rule for api.example.com
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: multi-hostname-service
+                port:
+                  number: 80
+
+---
+# Alternative: Using multiple Ingress resources
+# This approach gives more control per hostname
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: app.example.com
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: multi-hostname-service
+                port:
+                  number: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: www-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: www.example.com
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    alb.ingress.kubernetes.io/group.name: shared-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: www.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: multi-hostname-service
+                port:
+                  number: 80
+
+---
+# Testing:
+#
+# 1. Deploy:
+#    kubectl apply -f 02-multiple-hostnames.yaml
+#
+# 2. Wait for ALB:
+#    kubectl get ingress multi-hostname-ingress -w
+#
+# 3. Check External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=30
+#    # Should see CREATE for all three hostnames
+#
+# 4. Verify all DNS records:
+#    ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='example.com.'].Id" --output text | cut -d'/' -f3)
+#    
+#    for hostname in app.example.com www.example.com api.example.com; do
+#      echo "Checking $hostname..."
+#      aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#        --query "ResourceRecordSets[?Name=='${hostname}.']"
+#    done
+#
+# 5. Test DNS resolution for all:
+#    for hostname in app.example.com www.example.com api.example.com; do
+#      echo "Testing $hostname..."
+#      nslookup $hostname
+#    done
+#
+# 6. Test HTTP access:
+#    curl http://app.example.com
+#    curl http://www.example.com
+#    curl http://api.example.com
+#    # All should return the same response
+#
+# 7. Verify all point to same ALB:
+#    for hostname in app.example.com www.example.com api.example.com; do
+#      echo "$hostname resolves to:"
+#      dig +short $hostname
+#    done
+
+---
+# Expected Route53 Records:
+#
+# 1. app.example.com
+#    Type: A (Alias)
+#    Target: <ALB-DNS>
+#    TTL: 60
+#
+# 2. www.example.com
+#    Type: A (Alias)
+#    Target: <ALB-DNS>
+#    TTL: 60
+#
+# 3. api.example.com
+#    Type: A (Alias)
+#    Target: <ALB-DNS>
+#    TTL: 60
+#
+# Plus TXT records for each hostname for ownership tracking
+
+---
+# Use Cases:
+#
+# 1. Multiple domains for same application:
+#    - app.example.com (main)
+#    - www.example.com (www redirect)
+#    - api.example.com (API endpoint)
+#
+# 2. Multi-tenant applications:
+#    - tenant1.example.com
+#    - tenant2.example.com
+#    - tenant3.example.com
+#
+# 3. Environment-specific domains:
+#    - app-dev.example.com
+#    - app-staging.example.com
+#    - app-prod.example.com
+#
+# 4. Regional endpoints:
+#    - us-east.example.com
+#    - us-west.example.com
+#    - eu-west.example.com
+
+---
+# Best Practices:
+#
+# 1. Use separate Ingress resources for different TTLs:
+#    - Short TTL (60s) for testing/development
+#    - Long TTL (300s+) for production
+#
+# 2. Group related hostnames:
+#    - Use same Ingress for hostnames that should always point to same target
+#    - Use separate Ingress for independent services
+#
+# 3. Consider using CNAME for www:
+#    - Create www.example.com as CNAME to app.example.com
+#    - Reduces number of records to manage
+#
+# 4. Monitor DNS record count:
+#    - Route53 has limits on records per hosted zone
+#    - Use wildcards for large numbers of subdomains
+

@@ -4,6 +4,28 @@ This directory contains practical examples for using the AWS Load Balancer Contr
 
 ## Directory Structure
 
+### [external-dns/](external-dns/)
+Examples for testing and using External DNS to automatically create Route53 DNS records.
+
+**Contents:**
+- Basic Ingress DNS creation
+- Multiple hostnames configuration
+- Service LoadBalancer DNS (NLB)
+- Wildcard DNS records
+- Private hosted zone integration
+- TTL and record type control
+- DNS ownership and multi-tenant scenarios
+- Comprehensive testing and verification guide
+
+**Quick Start:**
+```bash
+cd external-dns/
+kubectl apply -f 01-basic-ingress-dns.yaml
+```
+
+**Documentation:**
+- [External DNS Examples README](external-dns/README.md)
+
 ### [ingress/](ingress/)
 Examples for using Kubernetes Ingress resources with the AWS Load Balancer Controller.
 

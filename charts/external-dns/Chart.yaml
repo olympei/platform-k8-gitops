@@ -1,21 +1,28 @@
 apiVersion: v2
-name: external-dns
-version: 1.19.0
-description: External DNS for Kubernetes
+name: external-dns-wrapper
+description: External DNS wrapper chart with extended RBAC templates
 type: application
+version: 1.19.0
 appVersion: "0.19.0"
-home: https://github.com/kubernetes-sigs/external-dns
-sources:
-  - https://github.com/kubernetes-sigs/external-dns
-maintainers:
-  - name: Kubernetes SIGs
+
+# This is a wrapper chart that includes:
+# 1. The official external-dns chart as a dependency
+# 2. Custom extended RBAC templates
+
+dependencies:
+  - name: external-dns
+    version: 1.19.0
+    repository: "file://./charts"
+    condition: external-dns.enabled
+
 keywords:
   - external-dns
   - dns
   - route53
   - aws
 
-dependencies:
-  - name: external-dns
-    version: 1.19.0
-    repository: "file://./charts/external-dns-1.19.0.tgz"
+maintainers:
+  - name: Platform Team
+
+annotations:
+  category: Infrastructure

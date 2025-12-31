@@ -1,0 +1,363 @@
+# Wildcard DNS with External DNS
+# This example creates wildcard DNS records for dynamic subdomains
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wildcard-app
+  namespace: default
+  labels:
+    app: wildcard-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: wildcard-app
+  template:
+    metadata:
+      labels:
+        app: wildcard-app
+    spec:
+      containers:
+        - name: app
+          image: hashicorp/http-echo:latest
+          args:
+            - "-text=Wildcard Application"
+          ports:
+            - containerPort: 5678
+              name: http
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: wildcard-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: wildcard-app
+  ports:
+    - port: 80
+      targetPort: 5678
+      protocol: TCP
+
+---
+# Ingress with wildcard DNS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wildcard-ingress
+  namespace: default
+  annotations:
+    # Wildcard DNS record
+    external-dns.alpha.kubernetes.io/hostname: "*.apps.example.com"
+    
+    # Optional: Set TTL
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    
+    # AWS Load Balancer Controller
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  ingressClassName: alb
+  rules:
+    # Wildcard host in Ingress rule
+    - host: "*.apps.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wildcard-service
+                port:
+                  number: 80
+
+---
+# Example: Multi-tenant with wildcard
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tenant-wildcard-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: "*.tenants.example.com"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: "*.tenants.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wildcard-service
+                port:
+                  number: 80
+
+---
+# Example: Environment-specific wildcard
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dev-wildcard-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: "*.dev.example.com"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: "*.dev.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wildcard-service
+                port:
+                  number: 80
+
+---
+# Testing:
+#
+# 1. Deploy:
+#    kubectl apply -f 04-wildcard-dns.yaml
+#
+# 2. Wait for ALB:
+#    kubectl get ingress wildcard-ingress -w
+#
+# 3. Get ALB DNS:
+#    ALB_DNS=$(kubectl get ingress wildcard-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+#    echo "ALB DNS: $ALB_DNS"
+#
+# 4. Check External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=20
+#    # Look for: "CREATE: *.apps.example.com A"
+#
+# 5. Verify Route53 wildcard record:
+#    ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='example.com.'].Id" --output text | cut -d'/' -f3)
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='*.apps.example.com.']"
+#
+# 6. Test DNS resolution with different subdomains:
+#    nslookup app1.apps.example.com
+#    nslookup app2.apps.example.com
+#    nslookup anything.apps.example.com
+#    # All should resolve to the same ALB
+#
+# 7. Test HTTP access with different subdomains:
+#    curl http://app1.apps.example.com
+#    curl http://app2.apps.example.com
+#    curl http://tenant1.apps.example.com
+#    # All should return the same response
+
+---
+# Expected Route53 Record:
+#
+# Name: *.apps.example.com
+# Type: A (Alias)
+# Alias Target: <ALB-DNS>
+# TTL: 300
+#
+# This single record matches:
+# - app1.apps.example.com
+# - app2.apps.example.com
+# - anything.apps.example.com
+# - etc.
+
+---
+# Use Cases:
+#
+# 1. Multi-Tenant SaaS:
+#    *.tenants.example.com
+#    - tenant1.tenants.example.com
+#    - tenant2.tenants.example.com
+#    - tenant3.tenants.example.com
+#
+# 2. Development Environments:
+#    *.dev.example.com
+#    - feature-123.dev.example.com
+#    - bugfix-456.dev.example.com
+#    - test-789.dev.example.com
+#
+# 3. User Subdomains:
+#    *.users.example.com
+#    - john.users.example.com
+#    - jane.users.example.com
+#    - bob.users.example.com
+#
+# 4. Regional Endpoints:
+#    *.regions.example.com
+#    - us-east.regions.example.com
+#    - us-west.regions.example.com
+#    - eu-west.regions.example.com
+#
+# 5. Microservices:
+#    *.services.example.com
+#    - auth.services.example.com
+#    - api.services.example.com
+#    - data.services.example.com
+
+---
+# Important Considerations:
+#
+# 1. Wildcard Limitations:
+#    - Only matches one level: *.example.com matches app.example.com
+#    - Does NOT match: app.sub.example.com
+#    - For multi-level, need: *.*.example.com (not recommended)
+#
+# 2. Certificate Requirements:
+#    - Need wildcard SSL certificate (*.apps.example.com)
+#    - Request from AWS Certificate Manager
+#    - Add to Ingress annotation:
+#      alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:..."
+#
+# 3. Security:
+#    - Wildcard DNS exposes all subdomains
+#    - Consider using specific records for production
+#    - Use WAF rules to restrict access
+#
+# 4. Performance:
+#    - Single DNS record for unlimited subdomains
+#    - Reduces Route53 record count
+#    - Faster DNS propagation
+
+---
+# Advanced: Wildcard with SSL
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wildcard-ssl-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: "*.apps.example.com"
+    
+    # AWS Load Balancer Controller with SSL
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    
+    # Wildcard certificate from ACM
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-TLS-1-2-Ext-2018-06"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: "*.apps.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wildcard-service
+                port:
+                  number: 80
+
+---
+# Request Wildcard Certificate in ACM:
+#
+# aws acm request-certificate \
+#   --domain-name "*.apps.example.com" \
+#   --validation-method DNS \
+#   --subject-alternative-names "apps.example.com" \
+#   --region us-east-1
+#
+# Validate certificate:
+# 1. Get validation CNAME from ACM console
+# 2. Add CNAME record to Route53
+# 3. Wait for validation (usually < 30 minutes)
+
+---
+# Combining Wildcard with Specific Records:
+#
+# You can have both wildcard and specific records:
+#
+# 1. Wildcard for general use:
+#    *.apps.example.com → ALB-1
+#
+# 2. Specific record for special case:
+#    admin.apps.example.com → ALB-2
+#
+# DNS resolution priority:
+# - Specific records take precedence over wildcards
+# - admin.apps.example.com → ALB-2 (specific)
+# - anything-else.apps.example.com → ALB-1 (wildcard)
+
+---
+# Example: Wildcard + Specific
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: general-wildcard
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: "*.apps.example.com"
+    alb.ingress.kubernetes.io/group.name: general-alb
+spec:
+  ingressClassName: alb
+  rules:
+    - host: "*.apps.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: general-service
+                port:
+                  number: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: admin-specific
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: admin.apps.example.com
+    alb.ingress.kubernetes.io/group.name: admin-alb
+spec:
+  ingressClassName: alb
+  rules:
+    - host: admin.apps.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-service
+                port:
+                  number: 80
+
+---
+# Monitoring Wildcard DNS:
+#
+# Check all subdomains resolving to wildcard:
+# for subdomain in app1 app2 app3 test dev prod; do
+#   echo "Testing ${subdomain}.apps.example.com"
+#   dig +short ${subdomain}.apps.example.com
+# done
+#
+# Verify all return same IP/CNAME
+
+---
+# Cleanup:
+#
+# kubectl delete -f 04-wildcard-dns.yaml
+#
+# Verify wildcard record deleted:
+# aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#   --query "ResourceRecordSets[?Name=='*.apps.example.com.']"
+

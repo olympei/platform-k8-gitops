@@ -1,0 +1,382 @@
+# Private Hosted Zone with External DNS
+# This example creates DNS records in a private Route53 hosted zone
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: internal-app
+  namespace: default
+  labels:
+    app: internal-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: internal-app
+  template:
+    metadata:
+      labels:
+        app: internal-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: internal-app
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+# Ingress with private DNS (internal ALB)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: internal-ingress
+  namespace: default
+  annotations:
+    # Use internal-hostname for private hosted zone
+    external-dns.alpha.kubernetes.io/internal-hostname: internal-app.internal.example.com
+    
+    # Optional: Set TTL
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    
+    # AWS Load Balancer Controller - Internal ALB
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  ingressClassName: alb
+  rules:
+    - host: internal-app.internal.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: internal-service
+                port:
+                  number: 80
+
+---
+# Example: Both public and private DNS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dual-dns-ingress
+  namespace: default
+  annotations:
+    # Public DNS (public hosted zone)
+    external-dns.alpha.kubernetes.io/hostname: app.example.com
+    
+    # Private DNS (private hosted zone)
+    external-dns.alpha.kubernetes.io/internal-hostname: app.internal.example.com
+    
+    # Internal ALB
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: internal-service
+                port:
+                  number: 80
+
+---
+# Example: Internal NLB with private DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-nlb-service
+  namespace: default
+  annotations:
+    # Private DNS for internal NLB
+    external-dns.alpha.kubernetes.io/internal-hostname: database.internal.example.com
+    
+    # AWS Load Balancer Controller - Internal NLB
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+spec:
+  type: LoadBalancer
+  selector:
+    app: internal-app
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres
+
+---
+# Prerequisites:
+#
+# 1. Create private hosted zone:
+#    aws route53 create-hosted-zone \
+#      --name internal.example.com \
+#      --vpc VPCRegion=us-east-1,VPCId=vpc-xxxxx \
+#      --caller-reference $(date +%s) \
+#      --hosted-zone-config Comment="Private zone for internal services",PrivateZone=true
+#
+# 2. Get private hosted zone ID:
+#    PRIVATE_ZONE_ID=$(aws route53 list-hosted-zones \
+#      --query "HostedZones[?Name=='internal.example.com.' && Config.PrivateZone].Id" \
+#      --output text | cut -d'/' -f3)
+#    echo "Private Zone ID: $PRIVATE_ZONE_ID"
+#
+# 3. Configure External DNS to use private zone:
+#    # Add to External DNS deployment args:
+#    - --zone-id-filter=$PRIVATE_ZONE_ID
+
+---
+# Testing:
+#
+# 1. Deploy:
+#    kubectl apply -f 05-private-hosted-zone.yaml
+#
+# 2. Wait for internal ALB:
+#    kubectl get ingress internal-ingress -w
+#
+# 3. Get internal ALB DNS:
+#    INTERNAL_ALB=$(kubectl get ingress internal-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+#    echo "Internal ALB: $INTERNAL_ALB"
+#
+# 4. Check External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=20
+#    # Look for: "CREATE: internal-app.internal.example.com A"
+#
+# 5. Verify private DNS record:
+#    aws route53 list-resource-record-sets --hosted-zone-id $PRIVATE_ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='internal-app.internal.example.com.']"
+#
+# 6. Test DNS resolution (from within VPC):
+#    # SSH to EC2 instance in same VPC or use kubectl exec
+#    kubectl run -it --rm debug --image=alpine --restart=Never -- sh
+#    apk add bind-tools
+#    nslookup internal-app.internal.example.com
+#    dig internal-app.internal.example.com
+#
+# 7. Test HTTP access (from within VPC):
+#    curl http://internal-app.internal.example.com
+
+---
+# Expected Route53 Record (Private Zone):
+#
+# Hosted Zone: internal.example.com (Private)
+# Name: internal-app.internal.example.com
+# Type: A (Alias)
+# Alias Target: <INTERNAL-ALB-DNS>
+# TTL: 300
+#
+# This record is only resolvable from within the VPC
+
+---
+# Use Cases:
+#
+# 1. Internal APIs:
+#    api.internal.example.com
+#    - Only accessible from within VPC
+#    - No public exposure
+#    - Used by internal services
+#
+# 2. Databases:
+#    postgres.internal.example.com
+#    mysql.internal.example.com
+#    - Database endpoints
+#    - Private access only
+#
+# 3. Admin Interfaces:
+#    admin.internal.example.com
+#    - Internal admin tools
+#    - Not exposed to internet
+#
+# 4. Monitoring/Metrics:
+#    prometheus.internal.example.com
+#    grafana.internal.example.com
+#    - Internal monitoring
+#    - VPC-only access
+#
+# 5. Service Mesh:
+#    service1.mesh.internal.example.com
+#    service2.mesh.internal.example.com
+#    - Internal service discovery
+#    - Microservices communication
+
+---
+# External DNS Configuration for Private Zones:
+#
+# Update External DNS deployment to include private zone:
+#
+# kubectl edit deployment -n external-dns external-dns
+#
+# Add to args:
+# - --zone-id-filter=Z1234567890ABC  # Public zone
+# - --zone-id-filter=Z0987654321XYZ  # Private zone
+#
+# Or use zone type filter:
+# - --zone-type-filter=public
+# - --zone-type-filter=private
+
+---
+# Example: External DNS with both public and private zones
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns
+  namespace: external-dns
+spec:
+  template:
+    spec:
+      containers:
+        - name: external-dns
+          image: registry.k8s.io/external-dns/external-dns:v0.15.0
+          args:
+            - --source=service
+            - --source=ingress
+            - --provider=aws
+            - --policy=sync
+            - --aws-zone-type=public
+            - --aws-zone-type=private
+            - --registry=txt
+            - --txt-owner-id=my-cluster
+            - --domain-filter=example.com
+            - --domain-filter=internal.example.com
+
+---
+# VPC Association for Private Hosted Zone:
+#
+# Associate private zone with additional VPCs:
+#
+# aws route53 associate-vpc-with-hosted-zone \
+#   --hosted-zone-id $PRIVATE_ZONE_ID \
+#   --vpc VPCRegion=us-east-1,VPCId=vpc-xxxxx
+#
+# List VPC associations:
+# aws route53 get-hosted-zone --id $PRIVATE_ZONE_ID \
+#   --query 'VPCs'
+
+---
+# Split-Horizon DNS:
+#
+# Same hostname in both public and private zones:
+#
+# Public Zone (example.com):
+# app.example.com → Public ALB (internet-facing)
+#
+# Private Zone (example.com):
+# app.example.com → Internal ALB (internal)
+#
+# Resolution depends on where query originates:
+# - From internet: resolves to public ALB
+# - From VPC: resolves to internal ALB
+
+---
+# Example: Split-Horizon Configuration
+# Public Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: public-app-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: app.example.com
+    alb.ingress.kubernetes.io/scheme: internet-facing
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: public-service
+                port:
+                  number: 80
+
+---
+# Internal Ingress (same hostname, different zone)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: internal-app-ingress
+  namespace: default
+  annotations:
+    external-dns.alpha.kubernetes.io/internal-hostname: app.example.com
+    alb.ingress.kubernetes.io/scheme: internal
+spec:
+  ingressClassName: alb
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: internal-service
+                port:
+                  number: 80
+
+---
+# Verification from within VPC:
+#
+# 1. Create debug pod:
+#    kubectl run -it --rm debug --image=alpine --restart=Never -- sh
+#
+# 2. Install DNS tools:
+#    apk add bind-tools curl
+#
+# 3. Test private DNS:
+#    nslookup internal-app.internal.example.com
+#    dig internal-app.internal.example.com
+#
+# 4. Test connectivity:
+#    curl http://internal-app.internal.example.com
+#
+# 5. Verify it's internal ALB:
+#    # Should see internal ALB DNS name
+#    dig +short internal-app.internal.example.com
+
+---
+# Security Considerations:
+#
+# 1. Private zones are only resolvable from associated VPCs
+# 2. Internal ALBs are not accessible from internet
+# 3. Use security groups to further restrict access
+# 4. Consider using VPC endpoints for AWS services
+# 5. Use IAM policies to control Route53 access
+
+---
+# Cleanup:
+#
+# kubectl delete -f 05-private-hosted-zone.yaml
+#
+# Verify private DNS record deleted:
+# aws route53 list-resource-record-sets --hosted-zone-id $PRIVATE_ZONE_ID \
+#   --query "ResourceRecordSets[?Name=='internal-app.internal.example.com.']"
+

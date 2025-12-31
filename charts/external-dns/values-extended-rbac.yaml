@@ -1,0 +1,113 @@
+# Extended RBAC Configuration for External DNS
+# Add this to your values file or use with: -f values-extended-rbac.yaml
+
+# RBAC configuration
+rbac:
+  # Extended ClusterRole with additional permissions
+  extended:
+    # Enable extended ClusterRole
+    enabled: true
+    
+    # Annotations for extended ClusterRole
+    annotations:
+      description: "Extended permissions for External DNS to watch additional resources"
+    
+    # Configure which resource types to watch
+    rules:
+      # Core Kubernetes resources
+      core:
+        enabled: true
+      
+      # Standard Ingress resources
+      ingress:
+        enabled: true
+      
+      # Gateway API resources (Kubernetes Gateway API)
+      gatewayAPI:
+        enabled: true
+      
+      # Istio service mesh
+      istio:
+        enabled: true
+      
+      # Contour ingress controller
+      contour:
+        enabled: false
+      
+      # Ambassador API Gateway
+      ambassador:
+        enabled: false
+      
+      # Traefik ingress controller
+      traefik:
+        enabled: false
+      
+      # F5 ingress controller
+      f5:
+        enabled: false
+      
+      # OpenShift routes
+      openshift:
+        enabled: false
+      
+      # Kong ingress controller
+      kong:
+        enabled: false
+      
+      # Gloo Edge API Gateway
+      gloo:
+        enabled: false
+      
+      # Skipper ingress controller
+      skipper:
+        enabled: false
+      
+      # DNSEndpoint CRD
+      dnsendpoint:
+        enabled: true
+      
+      # Event creation (for debugging)
+      events:
+        enabled: true
+    
+    # Additional custom rules (optional)
+    additionalRules: []
+    # - apiGroups: ["your-api.example.com"]
+    #   resources: ["yourcustomresources"]
+    #   verbs: ["get", "list", "watch"]
+  
+  # CRD Reader ClusterRole (optional)
+  crdReader:
+    # Enable CRD reader role
+    enabled: true
+    
+    # Annotations for CRD reader ClusterRole
+    annotations:
+      description: "Allows External DNS to read CRD definitions"
+  
+  # Namespace-scoped Role
+  namespaceRole:
+    # Enable namespace role
+    enabled: true
+    
+    # Annotations for namespace role
+    annotations:
+      description: "Namespace-scoped permissions for External DNS"
+    
+    # Configure namespace-scoped permissions
+    rules:
+      # ConfigMaps
+      configmaps:
+        enabled: true
+      
+      # Secrets (only if not using IRSA/Pod Identity)
+      secrets:
+        enabled: false
+      
+      # Leases (for leader election in multi-replica)
+      leases:
+        enabled: true
+    
+    # Additional namespace rules (optional)
+    additionalRules: []
+

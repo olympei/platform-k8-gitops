@@ -1,0 +1,163 @@
+# Basic Ingress with External DNS
+# This example creates a simple Ingress and External DNS automatically creates Route53 records
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app
+  namespace: default
+  labels:
+    app: test-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-app
+  template:
+    metadata:
+      labels:
+        app: test-app
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-app-service
+  namespace: default
+  labels:
+    app: test-app
+spec:
+  type: ClusterIP
+  selector:
+    app: test-app
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+
+---
+# Ingress with External DNS annotation
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-app-ingress
+  namespace: default
+  annotations:
+    # External DNS annotation - creates Route53 record
+    external-dns.alpha.kubernetes.io/hostname: test-app.example.com
+    
+    # AWS Load Balancer Controller annotations
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    
+    # Optional: Add tags for cost tracking
+    alb.ingress.kubernetes.io/tags: Environment=test,ManagedBy=kubernetes
+spec:
+  ingressClassName: alb
+  rules:
+    - host: test-app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: test-app-service
+                port:
+                  number: 80
+
+---
+# Testing Steps:
+#
+# 1. Deploy the application:
+#    kubectl apply -f 01-basic-ingress-dns.yaml
+#
+# 2. Wait for ALB to be created:
+#    kubectl get ingress test-app-ingress -w
+#
+# 3. Get ALB DNS name:
+#    ALB_DNS=$(kubectl get ingress test-app-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+#    echo "ALB DNS: $ALB_DNS"
+#
+# 4. Check External DNS logs:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns --tail=20
+#    # Look for: "CREATE: test-app.example.com A"
+#
+# 5. Verify Route53 record created:
+#    ZONE_ID=$(aws route53 list-hosted-zones --query "HostedZones[?Name=='example.com.'].Id" --output text | cut -d'/' -f3)
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='test-app.example.com.']"
+#
+# 6. Test DNS resolution:
+#    nslookup test-app.example.com
+#    dig test-app.example.com
+#
+# 7. Test HTTP access:
+#    curl http://test-app.example.com
+#
+# 8. Cleanup (DNS record will be automatically deleted):
+#    kubectl delete -f 01-basic-ingress-dns.yaml
+#
+# 9. Verify DNS record deleted:
+#    aws route53 list-resource-record-sets --hosted-zone-id $ZONE_ID \
+#      --query "ResourceRecordSets[?Name=='test-app.example.com.']"
+
+---
+# Expected Route53 Record:
+#
+# Name: test-app.example.com
+# Type: A
+# Alias: Yes
+# Alias Target: <ALB-DNS-NAME>
+# Routing Policy: Simple
+# TTL: 300 (default)
+#
+# External DNS also creates a TXT record for ownership:
+# Name: test-app.example.com
+# Type: TXT
+# Value: "heritage=external-dns,external-dns/owner=<owner-id>,external-dns/resource=ingress/default/test-app-ingress"
+
+---
+# Troubleshooting:
+#
+# If DNS record not created:
+#
+# 1. Check External DNS is running:
+#    kubectl get pods -n external-dns
+#
+# 2. Check External DNS logs for errors:
+#    kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns | grep -i error
+#
+# 3. Verify annotation is correct:
+#    kubectl get ingress test-app-ingress -o yaml | grep external-dns
+#
+# 4. Check if Ingress has LoadBalancer:
+#    kubectl get ingress test-app-ingress
+#    # Should show ADDRESS column with ALB DNS
+#
+# 5. Verify IAM permissions:
+#    # External DNS needs route53:ChangeResourceRecordSets permission
+#
+# 6. Check domain filter:
+#    kubectl get deployment -n external-dns external-dns -o yaml | grep domain-filter
+#    # Should include your domain (example.com)
+
