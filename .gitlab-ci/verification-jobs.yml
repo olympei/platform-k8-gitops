@@ -1,0 +1,144 @@
+# Verification and Status Jobs
+# Included in main .gitlab-ci.yml
+
+.verify_template:
+  stage: verify
+  script:
+    - echo "✅ Verifying cluster state for $ENVIRONMENT ..."
+    - kubectl get ns
+    - kubectl get ingress -A
+    - kubectl get pods -A | grep -E "external-secrets|nginx|efs|pod-identity|secrets-store|cluster-autoscaler|metrics-server|external-dns" || true
+    - kubectl get sc,pv,pvc
+  only: [main]
+  when: manual
+
+verify:dev:
+  extends: .verify_template
+  variables:
+    ENVIRONMENT: dev
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+  needs: ["deploy:kustomize:dev"]
+
+verify:prod:
+  extends: .verify_template
+  variables:
+    ENVIRONMENT: prod
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64
+  needs: ["deploy:kustomize:prod"]
+
+# Template for checking chart status
+.status_template:
+  stage: status
+  script:
+    - |
+      echo "📊 Checking chart status for $ENVIRONMENT..."
+      echo ""
+      
+      # Function to check installation status
+      check_chart_status() {
+        local chart_name=$1
+        local chart_dir="charts/${chart_name}"
+        
+        # Extract actual release name from Chart.yaml
+        if [ -f "$chart_dir/Chart.yaml" ]; then
+          local release_name=$(grep "^name:" "$chart_dir/Chart.yaml" | awk '{print $2}' | tr -d '"')
+        else
+          local release_name="$chart_name"
+        fi
+        
+        local ns_var="HELM_NAMESPACE_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local namespace=${!ns_var:-$chart_name}
+        local install_var="INSTALL_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local uninstall_var="UNINSTALL_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local install_value=${!install_var}
+        local uninstall_value=${!uninstall_var}
+        
+        echo "Chart: $chart_name"
+        echo "  Release: $release_name"
+        echo "  Namespace: $namespace"
+        
+        # Check installation flag
+        if [ -z "$install_value" ] || [ "$install_value" != "false" ] && [ "$install_value" != "0" ] && [ "$install_value" != "no" ]; then
+          echo "  Install Flag: ✅ enabled"
+        else
+          echo "  Install Flag: ❌ disabled"
+        fi
+        
+        # Check uninstall flag
+        if [ "$uninstall_value" = "true" ] || [ "$uninstall_value" = "1" ] || [ "$uninstall_value" = "yes" ]; then
+          echo "  Uninstall Flag: 🗑️  marked for removal"
+        else
+          echo "  Uninstall Flag: ⏭️  not marked"
+        fi
+        
+        # Check actual deployment status
+        if helm status "$release_name" -n "$namespace" >/dev/null 2>&1; then
+          CHART_VERSION=$(helm list -n "$namespace" -f "^${release_name}$" -o json | jq -r '.[0].chart // "unknown"')
+          APP_VERSION=$(helm list -n "$namespace" -f "^${release_name}$" -o json | jq -r '.[0].app_version // "unknown"')
+          STATUS=$(helm list -n "$namespace" -f "^${release_name}$" -o json | jq -r '.[0].status // "unknown"')
+          echo "  Deployment Status: 🚀 deployed"
+          echo "  Chart Version: $CHART_VERSION"
+          echo "  App Version: $APP_VERSION"
+          echo "  Status: $STATUS"
+          
+          # Check pod status
+          POD_COUNT=$(kubectl get pods -n "$namespace" -l "app.kubernetes.io/instance=$release_name" --no-headers 2>/dev/null | wc -l)
+          READY_PODS=$(kubectl get pods -n "$namespace" -l "app.kubernetes.io/instance=$release_name" --no-headers 2>/dev/null | grep -c "Running\|Completed" || echo "0")
+          echo "  Pods: $READY_PODS/$POD_COUNT ready"
+        else
+          echo "  Deployment Status: ❌ not deployed"
+        fi
+        
+        echo ""
+      }
+      
+      # Get all charts to check
+      if [ -z "$HELM_RELEASES" ]; then
+        echo "Checking all known charts..."
+        mapfile -t ALL_RELEASES < <(find charts -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
+      else
+        IFS=',' read -ra ALL_RELEASES <<< "${HELM_RELEASES}"
+      fi
+      
+      echo "Charts to check: ${ALL_RELEASES[*]}"
+      echo ""
+      echo "=================================================="
+      
+      for release in "${ALL_RELEASES[@]}"; do
+        check_chart_status "$release"
+      done
+      
+      echo "=================================================="
+      echo ""
+      echo "📋 Summary:"
+      echo "Environment: $ENVIRONMENT"
+      echo "Total charts checked: ${#ALL_RELEASES[@]}"
+      
+      # Count deployed charts
+      DEPLOYED_COUNT=0
+      for release in "${ALL_RELEASES[@]}"; do
+        ns_var="HELM_NAMESPACE_$(echo $release | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        namespace=${!ns_var:-$release}
+        if helm status "$release" -n "$namespace" >/dev/null 2>&1; then
+          DEPLOYED_COUNT=$((DEPLOYED_COUNT + 1))
+        fi
+      done
+      
+      echo "Deployed charts: $DEPLOYED_COUNT/${#ALL_RELEASES[@]}"
+  only: [main]
+  when: manual
+
+# Status checking jobs
+status:dev:
+  extends: .status_template
+  variables:
+    ENVIRONMENT: dev
+    HELM_RELEASES: $HELM_RELEASES_DEV
+    KUBECONFIG_DATA: $DEV_KUBECONFIG_B64
+
+status:prod:
+  extends: .status_template
+  variables:
+    ENVIRONMENT: prod
+    HELM_RELEASES: $HELM_RELEASES_PROD
+    KUBECONFIG_DATA: $PROD_KUBECONFIG_B64

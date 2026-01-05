@@ -1,0 +1,44 @@
+# GitLab CI/CD Pipeline for EKS Add-ons
+# Modular structure for better maintainability
+#
+# Documentation: See individual job files in .gitlab-ci/ directory
+# - validation-jobs.yml: Validation and testing
+# - helm-jobs.yml: Helm chart deployment/uninstallation
+# - k8s-resources-jobs.yml: K8s-resources deployment/uninstallation
+# - verification-jobs.yml: Verification and status checking
+
+stages:
+  - validate
+  - test
+  - plan
+  - deploy
+  - verify
+  - uninstall
+  - status
+
+default:
+  image: alpine:3.20
+  before_script:
+    - echo "🔧 Setting up environment..."
+    - apk add --no-cache bash curl git jq yq kubectl helm
+    - mkdir -p ~/.kube
+    - |
+      if [ -n "$KUBECONFIG_DATA" ]; then
+        echo "📝 Decoding kubeconfig..."
+        echo "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
+        export KUBECONFIG=~/.kube/config
+        echo "✅ Kubeconfig configured"
+      else
+        echo "⚠️  KUBECONFIG_DATA not set (normal for some jobs)"
+      fi
+    - echo "🔍 Checking tool versions..."
+    - helm version --short || echo "⚠️  Helm check skipped"
+    - kubectl version --client || echo "⚠️  Kubectl check skipped"
+    - echo "✅ Environment setup complete"
+
+# Include modular job definitions
+include:
+  - local: '.gitlab-ci/validation-jobs.yml'
+  - local: '.gitlab-ci/helm-jobs.yml'
+  - local: '.gitlab-ci/k8s-resources-jobs.yml'
+  - local: '.gitlab-ci/verification-jobs.yml'

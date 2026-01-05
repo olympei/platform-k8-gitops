@@ -1,0 +1,281 @@
+# Validation and Testing Jobs
+# Included in main .gitlab-ci.yml
+
+validate:helm:
+  stage: validate
+  script:
+    - |
+      echo "🧩 Linting Helm charts with direct values..."
+      echo ""
+      
+      # Function to check if chart should be validated
+      should_validate_chart() {
+        local chart_name=$1
+        local enable_var="INSTALL_$(echo $chart_name | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+        local enable_value=${!enable_var}
+        
+        # Default to true if variable not set
+        if [ -z "$enable_value" ]; then
+          return 0
+        fi
+        
+        # Check if explicitly disabled
+        if [ "$enable_value" = "false" ] || [ "$enable_value" = "0" ] || [ "$enable_value" = "no" ]; then
+          return 1
+        fi
+        
+        return 0
+      }
+      
+      LINT_ERRORS=0
+      SKIPPED_COUNT=0
+      VALUES_VALIDATED=0
+      
+      for chart in charts/*; do
+        [ -d "$chart" ] || continue
+        chart_name=$(basename "$chart")
+        
+        if ! should_validate_chart "$chart_name"; then
+          echo "⏭️  Skipping lint for $chart (disabled)"
+          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+          continue
+        fi
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📦 Linting: $chart_name"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        # Find the .tgz file
+        TGZ_FILE=$(find "$chart/charts" -name "*.tgz" -type f 2>/dev/null | head -1)
+        
+        # Determine what to lint
+        if [ -n "$TGZ_FILE" ]; then
+          CHART_TO_LINT="$TGZ_FILE"
+          echo "📦 Chart package: $TGZ_FILE"
+        else
+          CHART_TO_LINT="$chart"
+          echo "📦 Chart directory: $chart"
+          echo "ℹ️  No .tgz file found, using parent chart"
+        fi
+        echo ""
+        
+        # Validate with dev direct values
+        VALUES_DEV="$chart/values-dev-direct.yaml"
+        if [ -f "$VALUES_DEV" ]; then
+          echo "🔍 Validating with: values-dev-direct.yaml"
+          if helm lint "$CHART_TO_LINT" -f "$VALUES_DEV"; then
+            echo "✅ Lint passed with values-dev-direct.yaml"
+            VALUES_VALIDATED=$((VALUES_VALIDATED + 1))
+          else
+            echo "❌ Lint failed with values-dev-direct.yaml"
+            LINT_ERRORS=$((LINT_ERRORS + 1))
+          fi
+          echo ""
+        fi
+        
+        # Validate with prod direct values
+        VALUES_PROD="$chart/values-prod-direct.yaml"
+        if [ -f "$VALUES_PROD" ]; then
+          echo "🔍 Validating with: values-prod-direct.yaml"
+          if helm lint "$CHART_TO_LINT" -f "$VALUES_PROD"; then
+            echo "✅ Lint passed with values-prod-direct.yaml"
+            VALUES_VALIDATED=$((VALUES_VALIDATED + 1))
+          else
+            echo "❌ Lint failed with values-prod-direct.yaml"
+            LINT_ERRORS=$((LINT_ERRORS + 1))
+          fi
+          echo ""
+        fi
+        
+        # If no direct values files exist, skip
+        if [ ! -f "$VALUES_DEV" ] && [ ! -f "$VALUES_PROD" ]; then
+          echo "ℹ️  No direct values files found, skipping"
+          SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+          echo ""
+        fi
+      done
+      
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Validation Summary"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Direct values files validated: $VALUES_VALIDATED"
+      echo "Errors: $LINT_ERRORS"
+      echo "Skipped: $SKIPPED_COUNT"
+      
+      if [ $LINT_ERRORS -gt 0 ]; then
+        echo ""
+        echo "❌ $LINT_ERRORS validation(s) failed"
+        exit 1
+      fi
+      
+      echo ""
+      echo "✅ All enabled charts passed linting"
+  only: [merge_requests, main]
+        echo "❌ $LINT_ERRORS validation(s) failed"
+        exit 1
+      fi
+      
+      echo ""
+      echo "✅ All enabled charts passed linting"
+  only: [merge_requests, main]
+
+validate:kustomize:
+  stage: validate
+  script:
+    - echo "🧩 Rendering Kustomize overlays..."
+    - for env in dev prod; do
+        echo "Rendering environment: $env";
+        kubectl kustomize k8s-resources/environments/$env > /tmp/$env.yaml;
+        test -s /tmp/$env.yaml;
+      done
+  artifacts:
+    paths:
+      - /tmp/dev.yaml
+      - /tmp/prod.yaml
+  only: [merge_requests, main]
+
+# ============================================================================
+# TEST STAGE - Dependency Management Tests
+# ============================================================================
+
+test:dependencies:
+  stage: test
+  script:
+    - |
+      echo "🧪 Testing chart dependency detection and download..."
+      echo ""
+      
+      # Set TLS skip for corporate proxies
+      export HELM_REPO_SKIP_TLS_VERIFY=true
+      
+      # Run the download script
+      bash scripts/download-all-dependencies.sh
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Verifying Downloaded Dependencies"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      
+      CHARTS_WITH_DEPS=0
+      CHARTS_MISSING_DEPS=0
+      
+      for chart_dir in charts/*; do
+        [ -d "$chart_dir" ] || continue
+        chart_name=$(basename "$chart_dir")
+        
+        # Check if chart has dependencies in Chart.yaml
+        if [ -f "$chart_dir/Chart.yaml" ] && grep -q "dependencies:" "$chart_dir/Chart.yaml"; then
+          CHARTS_WITH_DEPS=$((CHARTS_WITH_DEPS + 1))
+          
+          # Verify charts/ directory exists
+          if [ -d "$chart_dir/charts" ]; then
+            dep_count=$(ls -1 "$chart_dir/charts" | wc -l)
+            echo "✅ $chart_name: $dep_count dependency file(s)"
+          else
+            echo "❌ $chart_name: Missing charts/ directory"
+            CHARTS_MISSING_DEPS=$((CHARTS_MISSING_DEPS + 1))
+          fi
+          
+          # Verify Chart.lock exists
+          if [ -f "$chart_dir/Chart.lock" ]; then
+            echo "   ✓ Chart.lock present"
+          else
+            echo "   ⚠️  Chart.lock missing"
+          fi
+        fi
+      done
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Test Summary"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Charts with dependencies: $CHARTS_WITH_DEPS"
+      echo "Charts missing dependencies: $CHARTS_MISSING_DEPS"
+      
+      if [ $CHARTS_MISSING_DEPS -gt 0 ]; then
+        echo ""
+        echo "❌ Some charts failed to download dependencies"
+        exit 1
+      fi
+      
+      echo ""
+      echo "✅ All chart dependencies downloaded successfully!"
+  artifacts:
+    paths:
+      - charts/*/charts/
+      - charts/*/Chart.lock
+    expire_in: 1 day
+  only: [merge_requests, main]
+  when: manual
+
+test:package:
+  stage: test
+  script:
+    - |
+      echo "📦 Testing chart packaging..."
+      echo ""
+      
+      # Set TLS skip for corporate proxies
+      export HELM_REPO_SKIP_TLS_VERIFY=true
+      
+      # Run the packaging script non-interactively
+      OUTPUT_DIR="test-charts-$(date +%Y%m%d-%H%M%S)"
+      bash scripts/download-and-package-charts.sh "$OUTPUT_DIR" <<< "n"
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📊 Verifying Package"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      
+      # Find the created package
+      PACKAGE=$(ls -t helm-charts-*.zip 2>/dev/null | head -1 || ls -t helm-charts-*.tar.gz 2>/dev/null | head -1)
+      
+      if [ -z "$PACKAGE" ]; then
+        echo "❌ Package file not found"
+        exit 1
+      fi
+      
+      echo "✅ Package created: $PACKAGE"
+      
+      # Show package size
+      PACKAGE_SIZE=$(du -h "$PACKAGE" | cut -f1)
+      echo "📊 Package size: $PACKAGE_SIZE"
+      
+      # Verify package contents
+      if [[ "$PACKAGE" == *.zip ]]; then
+        echo ""
+        echo "📋 Package contents (first 30 files):"
+        unzip -l "$PACKAGE" | head -30
+        
+        # Count files
+        FILE_COUNT=$(unzip -l "$PACKAGE" | tail -1 | awk '{print $2}')
+        echo ""
+        echo "📊 Total files in package: $FILE_COUNT"
+      else
+        echo ""
+        echo "📋 Package contents (first 30 files):"
+        tar -tzf "$PACKAGE" | head -30
+        
+        # Count files
+        FILE_COUNT=$(tar -tzf "$PACKAGE" | wc -l)
+        echo ""
+        echo "📊 Total files in package: $FILE_COUNT"
+      fi
+      
+      echo ""
+      echo "✅ Package test completed successfully!"
+  artifacts:
+    paths:
+      - helm-charts-*.zip
+      - helm-charts-*.tar.gz
+    expire_in: 7 days
+  only: [merge_requests, main]
+  when: manual
+
+plan:
+  stage: plan
+  script:
+    - echo "🔍 Kustomize diff for dev"
+    - kubectl diff -k k8s-resources/environments/dev || true
+  only: [merge_requests]
+  when: manual
